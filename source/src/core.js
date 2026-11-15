@@ -8,7 +8,7 @@ const PUBLIC_BUILD = false;
 /* Owner settings: the optional support link and the feature-request address (written in two parts to slow down address harvesters). */
 const SITE = /*SITE*/{ kofi: "", mail: ["", ""], source: "" }/*ENDSITE*/;
 const PL = window.PDFLib;
-const { PDFDocument, degrees, rgb, StandardFonts, PDFName, PDFString, PDFHexString, PDFDict, PDFArray, PDFRawStream, PDFNumber, PDFRef,
+const { PDFDocument, degrees, rgb, StandardFonts, PDFName, PDFString, PDFHexString, PDFDict, PDFArray, PDFRawStream, PDFNumber, PDFRef, PDFNull,
   BlendMode, LineCapStyle, pushGraphicsState, popGraphicsState, concatTransformationMatrix } = PL;
 
 /* ---------- small helpers ---------- */
