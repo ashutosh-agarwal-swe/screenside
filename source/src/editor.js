@@ -275,12 +275,18 @@
   }
   /* copyPages follows every reference on a page. A link, an annotation's /P or a form field can lead back into the
      source page tree and drag every original page, redacted ones included, into the output. So before copying, cut
-     each reference to a page, a page-tree node or an annotation on a marked page. Page links become placeholders
-     that relinkPages points at the matching output page. */
+     each reference to a page, a page-tree node or an annotation on a marked page, and keep only the form-field kids
+     that lead to a widget on a copied page. Page links become placeholders that relinkPages points at the matching
+     output page. */
   function isolatePages(src, keep, marked, tag) {
     const ctx = src.context, pages = src.getPages(), N = k => PDFName.of(k), at = new Map(pages.map((p, i) => [p.ref.tag, i]));
-    const cut = new Set(), seen = new Set(), TREE = new Set(["Page", "Pages", "Catalog"].map(N));
-    for (const i of marked) { const a = pages[i].node.lookup(N("Annots")); if (a instanceof PDFArray) for (const r of a.asArray()) if (r instanceof PDFRef) cut.add(r.tag); }
+    const cut = new Set(), own = new Set(), seen = new Set(), TREE = new Set(["Page", "Pages", "Catalog"].map(N));
+    const annots = (list, set) => { for (const i of list) { const a = pages[i].node.lookup(N("Annots")); if (a instanceof PDFArray) for (const r of a.asArray()) if (r instanceof PDFRef) set.add(r.tag); } };
+    annots(marked, cut); annots(keep, own);
+    const live = (r, done = new Set()) => {
+      if (!(r instanceof PDFRef) || done.has(r.tag)) return false; if (own.has(r.tag)) return true; done.add(r.tag);
+      const k = ctx.lookup(r)?.lookup?.(N("Kids")); return k instanceof PDFArray && k.asArray().some(x => live(x, done));
+    };
     const swap = v => {
       if (!(v instanceof PDFRef)) { walk(v); return v; }
       if (at.has(v.tag)) return N(tag + at.get(v.tag));
@@ -292,7 +298,11 @@
     const fixDict = (d, skip) => { for (const [k, v] of d.entries()) { if (k === skip) continue; const w = swap(v); if (w === PDFNull) d.delete(k); else d.set(k, w); } };
     const walk = o => {
       if (o?.dict instanceof PDFDict) o = o.dict;
-      if (o instanceof PDFDict) { if (o.lookup(N("Subtype")) === N("Widget")) o.delete(N("Parent")); fixDict(o); }
+      if (o instanceof PDFDict) {
+        const kids = o.lookup(N("Kids"));
+        if (kids instanceof PDFArray) { const k = PDFArray.withContext(ctx); for (const r of kids.asArray()) if (live(r)) k.push(r); o.set(N("Kids"), k); }
+        fixDict(o);
+      }
       else if (o instanceof PDFArray) for (let j = 0; j < o.size(); j++) o.set(j, swap(o.get(j)));
     };
     for (const i of keep) {
