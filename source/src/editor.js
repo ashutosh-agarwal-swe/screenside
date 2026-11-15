@@ -293,7 +293,7 @@
       const [ax, ay] = viewToPdf(v, x, v.H - y), [bx, by] = viewToPdf(v, x + w, v.H - y - hh), box = [Math.min(ax, bx), Math.min(ay, by), Math.abs(bx - ax), Math.abs(by - ay)];
       page.setMediaBox(...box); page.setCropBox(...box); n++;
     });
-    return { data: await doc.save(), note: `Cropped ${n} page${n === 1 ? "" : "s"}` };
+    return { data: await doc.save(), note: `Cropped ${n} page${n === 1 ? "" : "s"}. Content outside the box is hidden, not deleted. Use Redact PDF to remove it` };
   }
   async function finish() {
     commitText(); const mode = ED.mode, need = mode === "redact" ? "redact" : mode === "crop" ? "crop" : null;
