@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Screenside PDF Tools</title>
 <meta name="referrer" content="no-referrer">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-kWi/9DGyRRWvamr5N1cvftmh5tI+McaWxbfY2b9LNmg=' 'wasm-unsafe-eval' blob:; worker-src blob:; child-src blob:; style-src 'unsafe-inline'; img-src blob: data:; connect-src 'none'; font-src 'none'; media-src 'none'; object-src 'none'; frame-src 'none'; manifest-src 'none'; form-action 'none'; base-uri 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-r9WngNubT1pQ+ULGjOogt1qxNU/eoyy3oX9XDog7lH8=' 'wasm-unsafe-eval' blob:; worker-src blob:; child-src blob:; style-src 'unsafe-inline'; img-src blob: data:; connect-src 'none'; font-src 'none'; media-src 'none'; object-src 'none'; frame-src 'none'; manifest-src 'none'; form-action 'none'; base-uri 'none'">
 <style>
 /* Layout idea: a light table. One fixed header, then a single view at a time: tool shelf, tool bench, page desk or page editor. */
 :root {
@@ -617,7 +617,9 @@ async function rasterize(js, { dpi = 150, quality = 0.8, progress, paint } = {})
 }
 /* copyPages follows every reference on a kept page, so a link, an annotation /P or a form field that points at
    another page would pull in that page and, through its /Parent, the whole source tree with the removed pages.
-   Point kept pages at their new copies and everything else page-shaped at null, then check nothing slipped in. */
+   Point kept pages at their new copies and everything else page-shaped at null, then check nothing slipped in.
+   A kept widget's /Parent also leads into the form-field tree, whose /Kids list fields on removed pages too: copy
+   those fields with only the kids that lead to a widget on a kept page, and drop the value of a field that loses kids. */
 async function subsetPdf(doc, indices) {
   await doc.flush();
   const out = await PDFDocument.create(), ctx = out.context, N = s => PDFName.of(s), pages = doc.getPages();
@@ -632,6 +634,22 @@ async function subsetPdf(doc, indices) {
   const copier = PL.PDFObjectCopier.for(doc.context, ctx), nil = ctx.register(PL.PDFNull);
   for (const r of gone) copier.traversedObjects.set(r, nil);
   for (const r of kept.keys()) { const nr = ctx.nextRef(); kept.set(r, nr); copier.traversedObjects.set(r, nr); }
+  const own = new Set(indices.flatMap(i => pages[i].node.Annots()?.asArray() ?? []).filter(a => a instanceof PDFRef && !gone.has(a)));
+  const live = (r, done = new Set()) => {
+    if (!(r instanceof PDFRef) || gone.has(r) || done.has(r)) return false; if (own.has(r)) return true; done.add(r);
+    const k = doc.context.lookup(r)?.lookup?.(N("Kids")); return k instanceof PDFArray && k.asArray().some(x => live(x, done));
+  };
+  const fields = new Map(), field = r => { if (r instanceof PDFRef && !gone.has(r) && !fields.has(r)) { fields.set(r, null); return true; } };
+  for (const a of own) for (let d = doc.context.lookup(a), p; d instanceof PDFDict && field(p = d.get(N("Parent"))); d = doc.context.lookup(p));
+  for (const r of fields.keys()) {
+    const d = doc.context.lookup(r), kids = d instanceof PDFDict && d.lookup(N("Kids"));
+    if (!(kids instanceof PDFArray)) { fields.delete(r); continue; }
+    const k = kids.asArray().filter(x => live(x)), c = d.clone(doc.context);
+    for (const x of k) if (doc.context.lookup(x)?.lookup?.(N("Kids")) instanceof PDFArray) field(x);
+    c.set(N("Kids"), doc.context.obj(k)); if (k.length < kids.size()) for (const x of ["V", "DV", "RV"]) c.delete(N(x));
+    const nr = ctx.nextRef(); fields.set(r, [nr, c]); copier.traversedObjects.set(r, nr);
+  }
+  for (const [nr, c] of fields.values()) ctx.assign(nr, copier.copy(c));
   const dead = a => {
     const d = ctx.lookup(a); if (!(d instanceof PDFDict)) return true;
     if (d.lookup(N("Subtype")) !== N("Link")) return false;
