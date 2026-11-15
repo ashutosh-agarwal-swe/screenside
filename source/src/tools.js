@@ -314,7 +314,7 @@ tool({ id: "form-filler", name: "PDF Form Filler", cat: "edit", icon: "form", de
 tool({ id: "edit", name: "Edit PDF", cat: "edit", icon: "pen", desc: "Add text, shapes, pictures and freehand marks on top of the pages.", note: "Adds content on top of the page. Existing text is covered with the whiteout tool, not rewritten.", accept: ["pdf"], editor: "edit" });
 tool({ id: "annotate", name: "PDF Annotator", cat: "edit", icon: "mark", desc: "Highlight, draw and write notes on a PDF.", accept: ["pdf"], editor: "annotate" });
 tool({ id: "reader", name: "PDF Reader", cat: "edit", icon: "eye", desc: "Open and read a PDF, with zoom.", accept: ["pdf"], editor: "read" });
-tool({ id: "crop", name: "Crop PDF", cat: "edit", icon: "crop", desc: "Drag a box around what to keep and trim away the rest.", accept: ["pdf"], editor: "crop" });
+tool({ id: "crop", name: "Crop PDF", cat: "edit", icon: "crop", desc: "Drag a box around what to keep. Each page is shown only inside that box.", note: "Cropping hides what is outside the box but does not delete it, so anyone with the file can bring it back. To remove something for good, use Redact PDF.", accept: ["pdf"], editor: "crop" });
 tool({ id: "redact", name: "Redact PDF", cat: "edit", icon: "bar", desc: "Black out sensitive areas for good.", note: "Each page you mark is rebuilt as a picture with the boxes burned in, so the hidden text is gone from the file, not just covered.", accept: ["pdf"], editor: "redact" });
 
 /* Sign and protect */

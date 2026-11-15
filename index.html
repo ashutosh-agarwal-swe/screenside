@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Screenside PDF Tools</title>
 <meta name="referrer" content="no-referrer">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-MNS/xW+WMDQ8RDNI63FpSXfMGfyuKIbl1BxVXIpVB+E=' 'wasm-unsafe-eval' blob:; worker-src blob:; child-src blob:; style-src 'unsafe-inline'; img-src blob: data:; connect-src 'none'; font-src 'none'; media-src 'none'; object-src 'none'; frame-src 'none'; manifest-src 'none'; form-action 'none'; base-uri 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-DRc7+vgcJ/CNLLQjjAwmjqG4Xp/NRe0GcTrCgOnxNJY=' 'wasm-unsafe-eval' blob:; worker-src blob:; child-src blob:; style-src 'unsafe-inline'; img-src blob: data:; connect-src 'none'; font-src 'none'; media-src 'none'; object-src 'none'; frame-src 'none'; manifest-src 'none'; form-action 'none'; base-uri 'none'">
 <style>
 /* Layout idea: a light table. One fixed header, then a single view at a time: tool shelf, tool bench, page desk or page editor. */
 :root {
@@ -1579,7 +1579,7 @@ tool({ id: "form-filler", name: "PDF Form Filler", cat: "edit", icon: "form", de
 tool({ id: "edit", name: "Edit PDF", cat: "edit", icon: "pen", desc: "Add text, shapes, pictures and freehand marks on top of the pages.", note: "Adds content on top of the page. Existing text is covered with the whiteout tool, not rewritten.", accept: ["pdf"], editor: "edit" });
 tool({ id: "annotate", name: "PDF Annotator", cat: "edit", icon: "mark", desc: "Highlight, draw and write notes on a PDF.", accept: ["pdf"], editor: "annotate" });
 tool({ id: "reader", name: "PDF Reader", cat: "edit", icon: "eye", desc: "Open and read a PDF, with zoom.", accept: ["pdf"], editor: "read" });
-tool({ id: "crop", name: "Crop PDF", cat: "edit", icon: "crop", desc: "Drag a box around what to keep and trim away the rest.", accept: ["pdf"], editor: "crop" });
+tool({ id: "crop", name: "Crop PDF", cat: "edit", icon: "crop", desc: "Drag a box around what to keep. Each page is shown only inside that box.", note: "Cropping hides what is outside the box but does not delete it, so anyone with the file can bring it back. To remove something for good, use Redact PDF.", accept: ["pdf"], editor: "crop" });
 tool({ id: "redact", name: "Redact PDF", cat: "edit", icon: "bar", desc: "Black out sensitive areas for good.", note: "Each page you mark is rebuilt as a picture with the boxes burned in, so the hidden text is gone from the file, not just covered.", accept: ["pdf"], editor: "redact" });
 
 /* Sign and protect */
@@ -1888,13 +1888,16 @@ tool({ id: "flatten", name: "Flatten PDF", cat: "sec", icon: "layers", desc: "Lo
   /* copyPages follows every reference on a page. A link, an annotation's /P or a form field can lead back into the
      source page tree and drag every original page, redacted ones included, into the output. So before copying, cut
      each reference to a page, a page-tree node or an annotation on a marked page, and keep only the form-field kids
-     that lead to a widget on a copied page. Page links become placeholders that relinkPages points at the matching
+     that lead to a widget on a copied page (a field that loses kids also loses its value, which a redacted widget
+     may have shown). Page links become placeholders that relinkPages points at the matching
      output page. */
   function isolatePages(src, keep, marked, tag) {
     const ctx = src.context, pages = src.getPages(), N = k => PDFName.of(k), at = new Map(pages.map((p, i) => [p.ref.tag, i]));
     const cut = new Set(), own = new Set(), seen = new Set(), TREE = new Set(["Page", "Pages", "Catalog"].map(N));
-    const annots = (list, set) => { for (const i of list) { const a = pages[i].node.lookup(N("Annots")); if (a instanceof PDFArray) for (const r of a.asArray()) if (r instanceof PDFRef) set.add(r.tag); } };
-    annots(marked, cut); annots(keep, own);
+    const annots = list => list.flatMap(i => { const a = pages[i].node.lookup(N("Annots")); return a instanceof PDFArray ? a.asArray().filter(r => r instanceof PDFRef) : []; });
+    const cutRefs = annots([...marked]), ownRefs = annots(keep), fields = new Set();
+    for (const r of cutRefs) cut.add(r.tag); for (const r of ownRefs) own.add(r.tag);
+    for (const r of [...cutRefs, ...ownRefs]) for (let d = ctx.lookup(r), p; d instanceof PDFDict && (p = d.get(N("Parent"))) instanceof PDFRef && !fields.has(p.tag); d = ctx.lookup(p)) fields.add(p.tag);
     const live = (r, done = new Set()) => {
       if (!(r instanceof PDFRef) || done.has(r.tag)) return false; if (own.has(r.tag)) return true; done.add(r.tag);
       const k = ctx.lookup(r)?.lookup?.(N("Kids")); return k instanceof PDFArray && k.asArray().some(x => live(x, done));
@@ -1904,15 +1907,19 @@ tool({ id: "flatten", name: "Flatten PDF", cat: "sec", icon: "layers", desc: "Lo
       if (at.has(v.tag)) return N(tag + at.get(v.tag));
       const o = ctx.lookup(v);
       if (cut.has(v.tag) || (o instanceof PDFDict && TREE.has(o.lookup(N("Type"))))) return PDFNull;
-      if (!seen.has(v.tag)) { seen.add(v.tag); walk(o); }
+      if (!seen.has(v.tag)) { seen.add(v.tag); walk(o, fields.has(v.tag)); }
       return v;
     };
     const fixDict = (d, skip) => { for (const [k, v] of d.entries()) { if (k === skip) continue; const w = swap(v); if (w === PDFNull) d.delete(k); else d.set(k, w); } };
-    const walk = o => {
+    const walk = (o, field) => {
       if (o?.dict instanceof PDFDict) o = o.dict;
       if (o instanceof PDFDict) {
-        const kids = o.lookup(N("Kids"));
-        if (kids instanceof PDFArray) { const k = PDFArray.withContext(ctx); for (const r of kids.asArray()) if (live(r)) k.push(r); o.set(N("Kids"), k); }
+        const kids = field && o.lookup(N("Kids"));
+        if (kids instanceof PDFArray) {
+          const k = PDFArray.withContext(ctx); for (const r of kids.asArray()) if (live(r)) k.push(r);
+          if (k.size() < kids.size()) for (const x of ["V", "DV", "RV"]) o.delete(N(x));
+          o.set(N("Kids"), k);
+        }
         fixDict(o);
       }
       else if (o instanceof PDFArray) for (let j = 0; j < o.size(); j++) o.set(j, swap(o.get(j)));
@@ -1971,7 +1978,7 @@ tool({ id: "flatten", name: "Flatten PDF", cat: "sec", icon: "layers", desc: "Lo
       const [ax, ay] = viewToPdf(v, x, v.H - y), [bx, by] = viewToPdf(v, x + w, v.H - y - hh), box = [Math.min(ax, bx), Math.min(ay, by), Math.abs(bx - ax), Math.abs(by - ay)];
       page.setMediaBox(...box); page.setCropBox(...box); n++;
     });
-    return { data: await doc.save(), note: `Cropped ${n} page${n === 1 ? "" : "s"}` };
+    return { data: await doc.save(), note: `Cropped ${n} page${n === 1 ? "" : "s"}. Content outside the box is hidden, not deleted. Use Redact PDF to remove it` };
   }
   async function finish() {
     commitText(); const mode = ED.mode, need = mode === "redact" ? "redact" : mode === "crop" ? "crop" : null;
