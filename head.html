@@ -85,9 +85,11 @@ svg.i { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-widt
 .tcard .ti { width: 36px; height: 36px; border-radius: 8px; display: grid; place-items: center; background: color-mix(in srgb, var(--c) 14%, transparent); color: var(--c); flex: none; }
 .tcard b { display: block; font-weight: 600; }
 .tcard small { color: var(--muted); font-size: 12.5px; line-height: 1.35; display: block; }
-.missing { color: var(--muted); font-size: 13px; border-top: 1px solid var(--line); padding-top: 16px; max-width: 90ch; }
+.missing { color: var(--muted); font-size: 13px; border-top: 1px solid var(--line); padding-top: 16px; }
 .missing b { color: var(--ink); }
-.foot { border-top: 3px solid var(--gold); padding-top: 18px; display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px 28px; font-size: 13.5px; color: var(--muted); }
+.foot { border-top: 3px solid var(--gold); padding-top: 18px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px 28px; font-size: 13.5px; color: var(--muted); }
+.foot > div h3 { text-align: center; }
+.foot > div p { text-align: left; }
 .foot h3 { margin: 0 0 4px; font: 700 12px/1 var(--font-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--ink); }
 .foot p { margin: 0; }
 .foot a { font-weight: 600; }
@@ -251,7 +253,7 @@ body.filedrag .dropveil.on { display: grid; }
 .pv-stage canvas { background: #fff; box-shadow: 0 10px 40px rgba(0,0,0,.5); }
 .toasts { position: fixed; left: 50%; bottom: 46px; transform: translateX(-50%); z-index: 90; display: flex; flex-direction: column; gap: 8px; align-items: center; width: min(520px, calc(100% - 32px)); pointer-events: none; }
 .toast { background: var(--ink); color: var(--desk); border-radius: 8px; padding: 9px 14px; box-shadow: 0 8px 24px rgba(0,0,0,.25); max-width: 100%; }
-@media (max-width: 720px) { .hint { display: none; } .brand span { display: none; } .desk { padding: 16px 16px 32px; } :root { --gap: 18px; } .hero h1 { font-size: 28px; } }
+@media (max-width: 720px) { .foot { grid-template-columns: 1fr; } .foot > div h3 { text-align: left; } .hint { display: none; } .brand span { display: none; } .desk { padding: 16px 16px 32px; } :root { --gap: 18px; } .hero h1 { font-size: 28px; } }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 </style>
 </head>
