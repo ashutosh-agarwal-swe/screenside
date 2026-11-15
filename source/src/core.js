@@ -239,8 +239,39 @@ async function rasterize(js, { dpi = 150, quality = 0.8, progress, paint } = {})
   }
   return await out.save();
 }
+/* copyPages follows every reference on a kept page, so a link, an annotation /P or a form field that points at
+   another page would pull in that page and, through its /Parent, the whole source tree with the removed pages.
+   Point kept pages at their new copies and everything else page-shaped at null, then check nothing slipped in. */
 async function subsetPdf(doc, indices) {
-  const out = await PDFDocument.create();
-  for (const p of await out.copyPages(doc, indices)) out.addPage(p);
+  await doc.flush();
+  const out = await PDFDocument.create(), ctx = out.context, N = s => PDFName.of(s), pages = doc.getPages();
+  const typeOf = o => { const t = o instanceof PDFDict && o.lookup(N("Type")); return t instanceof PDFName ? t.decodeText() : null; };
+  const kept = new Map(indices.map(i => [pages[i].ref, null])), gone = new Set([doc.context.trailerInfo.Root]);
+  for (const p of pages) {
+    for (let n = p.node, r; (r = n.get(N("Parent"))) instanceof PDFRef && !gone.has(r); n = doc.context.lookup(r)) gone.add(r);
+    if (!kept.has(p.ref)) { gone.add(p.ref); for (const a of p.node.Annots()?.asArray() ?? []) if (a instanceof PDFRef) gone.add(a); }
+  }
+  for (const [ref, o] of doc.context.enumerateIndirectObjects())
+    if (!kept.has(ref) && (["Page", "Pages", "Catalog"].includes(typeOf(o)) || o instanceof PDFDict && gone.has(o.get(N("P"))))) gone.add(ref);
+  const copier = PL.PDFObjectCopier.for(doc.context, ctx), nil = ctx.register(PL.PDFNull);
+  for (const r of gone) copier.traversedObjects.set(r, nil);
+  for (const r of kept.keys()) { const nr = ctx.nextRef(); kept.set(r, nr); copier.traversedObjects.set(r, nr); }
+  const dead = a => {
+    const d = ctx.lookup(a); if (!(d instanceof PDFDict)) return true;
+    if (d.lookup(N("Subtype")) !== N("Link")) return false;
+    const act = d.lookup(N("A")), dest = d.lookup(N("Dest")) ?? (act instanceof PDFDict ? act.lookup(N("D")) : undefined);
+    return dest instanceof PDFArray && dest.get(0) === nil;
+  };
+  for (const i of indices) {
+    const src = pages[i], node = copier.copy(src.node);
+    let ref = kept.get(src.ref); if (ctx.lookup(ref)) ref = ctx.nextRef();
+    const annots = node.lookup(N("Annots"));
+    if (annots instanceof PDFArray) { const live = annots.asArray().filter(a => !dead(a)); live.length ? node.set(N("Annots"), ctx.obj(live)) : node.delete(N("Annots")); }
+    ctx.assign(ref, node); out.addPage(PL.PDFPage.of(node, ref, out));
+  }
+  const ok = new Set([ctx.trailerInfo.Root, ...out.getPages().map(p => p.ref)]);
+  for (const p of out.getPages()) for (let n = p.node, r; (r = n.get(N("Parent"))) instanceof PDFRef && !ok.has(r); n = ctx.lookup(r)) ok.add(r);
+  for (const [ref, o] of ctx.enumerateIndirectObjects())
+    if (["Page", "Pages", "Catalog"].includes(typeOf(o)) && !ok.has(ref)) throw new Error("Could not separate the chosen pages from the rest of this PDF.");
   return await out.save();
 }
