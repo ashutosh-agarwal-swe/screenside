@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Screenside PDF Tools</title>
 <meta name="referrer" content="no-referrer">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-pRXXPMI0beKM0YmiLlvE5ziO2Wwp4OmfTgatA0FTskY=' 'wasm-unsafe-eval' blob:; worker-src blob:; child-src blob:; style-src 'unsafe-inline'; img-src blob: data:; connect-src 'none'; font-src 'none'; media-src 'none'; object-src 'none'; frame-src 'none'; manifest-src 'none'; form-action 'none'; base-uri 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-Vx12WLrd2ADAh0n+CL4xARS6M/6TduS47+DI94tCFPg=' 'wasm-unsafe-eval' blob:; worker-src blob:; child-src blob:; style-src 'unsafe-inline'; img-src blob: data:; connect-src 'none'; font-src 'none'; media-src 'none'; object-src 'none'; frame-src 'none'; manifest-src 'none'; form-action 'none'; base-uri 'none'">
 <style>
 /* Layout idea: a light table. One fixed header, then a single view at a time: tool shelf, tool bench, page desk or page editor. */
 :root {
@@ -1579,7 +1579,7 @@ tool({ id: "form-filler", name: "PDF Form Filler", cat: "edit", icon: "form", de
 tool({ id: "edit", name: "Edit PDF", cat: "edit", icon: "pen", desc: "Add text, shapes, pictures and freehand marks on top of the pages.", note: "Adds content on top of the page. Existing text is covered with the whiteout tool, not rewritten.", accept: ["pdf"], editor: "edit" });
 tool({ id: "annotate", name: "PDF Annotator", cat: "edit", icon: "mark", desc: "Highlight, draw and write notes on a PDF.", accept: ["pdf"], editor: "annotate" });
 tool({ id: "reader", name: "PDF Reader", cat: "edit", icon: "eye", desc: "Open and read a PDF, with zoom.", accept: ["pdf"], editor: "read" });
-tool({ id: "crop", name: "Crop PDF", cat: "edit", icon: "crop", desc: "Drag a box around what to keep and trim away the rest.", accept: ["pdf"], editor: "crop" });
+tool({ id: "crop", name: "Crop PDF", cat: "edit", icon: "crop", desc: "Drag a box around what to keep. Each page is shown only inside that box.", note: "Cropping hides what is outside the box but does not delete it, so anyone with the file can bring it back. To remove something for good, use Redact PDF.", accept: ["pdf"], editor: "crop" });
 tool({ id: "redact", name: "Redact PDF", cat: "edit", icon: "bar", desc: "Black out sensitive areas for good.", note: "Each page you mark is rebuilt as a picture with the boxes burned in, so the hidden text is gone from the file, not just covered.", accept: ["pdf"], editor: "redact" });
 
 /* Sign and protect */
@@ -1905,7 +1905,7 @@ tool({ id: "flatten", name: "Flatten PDF", cat: "sec", icon: "layers", desc: "Lo
       const [ax, ay] = viewToPdf(v, x, v.H - y), [bx, by] = viewToPdf(v, x + w, v.H - y - hh), box = [Math.min(ax, bx), Math.min(ay, by), Math.abs(bx - ax), Math.abs(by - ay)];
       page.setMediaBox(...box); page.setCropBox(...box); n++;
     });
-    return { data: await doc.save(), note: `Cropped ${n} page${n === 1 ? "" : "s"}` };
+    return { data: await doc.save(), note: `Cropped ${n} page${n === 1 ? "" : "s"}. Content outside the box is hidden, not deleted. Use Redact PDF to remove it` };
   }
   async function finish() {
     commitText(); const mode = ED.mode, need = mode === "redact" ? "redact" : mode === "crop" ? "crop" : null;
