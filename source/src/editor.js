@@ -273,17 +273,73 @@
     }
     return await doc.save();
   }
-  async function exportRedact() {
-    const src = await loadDoc(ED.entry.bytes), out = await PDFDocument.create(); let n = 0;
+  /* copyPages follows every reference on a page. A link, an annotation's /P or a form field can lead back into the
+     source page tree and drag every original page, redacted ones included, into the output. So before copying, cut
+     each reference to a page, a page-tree node or an annotation on a marked page. Page links become placeholders
+     that relinkPages points at the matching output page. */
+  function isolatePages(src, keep, marked, tag) {
+    const ctx = src.context, pages = src.getPages(), N = k => PDFName.of(k), at = new Map(pages.map((p, i) => [p.ref.tag, i]));
+    const cut = new Set(), seen = new Set(), TREE = new Set(["Page", "Pages", "Catalog"].map(N));
+    for (const i of marked) { const a = pages[i].node.lookup(N("Annots")); if (a instanceof PDFArray) for (const r of a.asArray()) if (r instanceof PDFRef) cut.add(r.tag); }
+    const swap = v => {
+      if (!(v instanceof PDFRef)) { walk(v); return v; }
+      if (at.has(v.tag)) return N(tag + at.get(v.tag));
+      const o = ctx.lookup(v);
+      if (cut.has(v.tag) || (o instanceof PDFDict && TREE.has(o.lookup(N("Type"))))) return PDFNull;
+      if (!seen.has(v.tag)) { seen.add(v.tag); walk(o); }
+      return v;
+    };
+    const fixDict = (d, skip) => { for (const [k, v] of d.entries()) { if (k === skip) continue; const w = swap(v); if (w === PDFNull) d.delete(k); else d.set(k, w); } };
+    const walk = o => {
+      if (o?.dict instanceof PDFDict) o = o.dict;
+      if (o instanceof PDFDict) { if (o.lookup(N("Subtype")) === N("Widget")) o.delete(N("Parent")); fixDict(o); }
+      else if (o instanceof PDFArray) for (let j = 0; j < o.size(); j++) o.set(j, swap(o.get(j)));
+    };
+    for (const i of keep) {
+      const node = pages[i].node;
+      for (const k of ["Resources", "MediaBox", "CropBox", "Rotate"]) if (!node.get(N(k))) { const v = node.getInheritableAttribute(N(k)); if (v) node.set(N(k), v); }
+      fixDict(node, N("Parent"));
+    }
+  }
+  function relinkPages(out, tag) {
+    const to = new Map(out.getPages().map((p, i) => [PDFName.of(tag + i), p.ref]));
+    const walk = o => {
+      if (o?.dict instanceof PDFDict) o = o.dict;
+      if (o instanceof PDFDict) { for (const [k, v] of o.entries()) { if (to.has(v)) o.set(k, to.get(v)); else walk(v); } }
+      else if (o instanceof PDFArray) for (let j = 0; j < o.size(); j++) { const v = o.get(j); if (to.has(v)) o.set(j, to.get(v)); else walk(v); }
+    };
+    for (const [, o] of out.context.enumerateIndirectObjects()) walk(o);
+  }
+  /* Last check: the only page objects in the file must be the ones the output is made of. */
+  function onlyOwnPages(out) {
+    const own = new Set(out.getPages().map(p => p.ref.tag)), T = PDFName.of("Type"), root = out.catalog.get(PDFName.of("Pages"));
+    for (const [ref, o] of out.context.enumerateIndirectObjects()) {
+      const t = o instanceof PDFDict ? o.lookup(T) : null;
+      if ((t === PDFName.of("Page") && !own.has(ref.tag)) || (t === PDFName.of("Pages") && ref !== root) || (t === PDFName.of("Catalog") && o !== out.catalog)) return false;
+    }
+    return true;
+  }
+  async function buildRedacted(marked, all) {
+    const src = await loadDoc(ED.entry.bytes), out = await PDFDocument.create(), tag = "ScreensidePage" + Math.random().toString(36).slice(2) + "_";
+    const keep = all ? [] : ED.pages.map((_, i) => i).filter(i => !marked.has(i));
+    isolatePages(src, keep, marked, tag);
     for (const [i, P] of ED.pages.entries()) {
-      const boxes = ED.objs.filter(o => o.page === i && o.type === "redact");
-      if (!boxes.length) { const [p] = await out.copyPages(src, [i]); out.addPage(p); continue; }
+      if (keep.includes(i)) { const [p] = await out.copyPages(src, [i]); out.addPage(p); continue; }
       setTip(`Rebuilding page ${i + 1}…`);
+      const boxes = ED.objs.filter(o => o.page === i && o.type === "redact");
       const { cv, scale } = await renderPage(ED.js, i + 1, { scale: 2.2 }), c = cv.getContext("2d"); c.fillStyle = "#000";
       for (const b of boxes) c.fillRect(b.x * scale, b.y * scale, b.w * scale, b.h * scale);
-      const img = await out.embedJpg(await canvasBytes(cv, "image/jpeg", 0.9)); out.addPage([P.w, P.h]).drawImage(img, { x: 0, y: 0, width: P.w, height: P.h }); n++;
+      const img = await out.embedJpg(await canvasBytes(cv, "image/jpeg", 0.9)); out.addPage([P.w, P.h]).drawImage(img, { x: 0, y: 0, width: P.w, height: P.h });
     }
-    return { data: await out.save(), note: `Redacted ${n} page${n === 1 ? "" : "s"}. The hidden content is removed` };
+    relinkPages(out, tag);
+    return onlyOwnPages(out) ? out : null;
+  }
+  async function exportRedact() {
+    const marked = new Set(ED.objs.filter(o => o.type === "redact").map(o => o.page)), n = marked.size;
+    let out = await buildRedacted(marked, false), all = false;
+    if (!out) { out = await buildRedacted(marked, true); all = true; }
+    if (!out) throw new Error("This PDF could not be redacted safely.");
+    return { data: await out.save(), note: `Redacted ${n} page${n === 1 ? "" : "s"}${all ? ". Every page was rebuilt as a picture" : ""}. The hidden content is removed` };
   }
   async function exportCrop() {
     const doc = await loadDoc(ED.entry.bytes); let n = 0;
