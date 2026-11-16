@@ -4,7 +4,9 @@ Free PDF tools that run entirely in your browser. Nothing is uploaded.
 
 Merge, split, organize, rotate, compress, convert, edit, annotate, sign, redact, crop, number, watermark, fill forms, protect and unlock PDFs. 32 tools in one page.
 
-**Site:** https://screenside.ca
+**Site:** https://screenside.ca  
+
+Built with AI-assisted development (coding fixes, security and optimization)  
 
 ## How your files are handled
 
