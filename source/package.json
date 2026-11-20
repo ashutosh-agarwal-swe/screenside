@@ -1,0 +1,14 @@
+{
+  "name": "screenside",
+  "private": true,
+  "description": "Lists the library versions bundled in source/vendor so that GitHub can raise security alerts for them. Nothing is installed from this file.",
+  "license": "AGPL-3.0-only",
+  "dependencies": {
+    "jszip": "3.10.1",
+    "pdf-lib": "1.17.1",
+    "pdfjs-dist": "6.2.108",
+    "pptxgenjs": "4.0.1",
+    "tesseract.js": "7.0.0",
+    "tesseract.js-core": "7.0.0"
+  }
+}
