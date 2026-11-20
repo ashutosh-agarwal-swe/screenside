@@ -73,16 +73,19 @@ tool({ id: "extract-images", name: "Extract Images", cat: "conv", icon: "copy",
 /* ---------- several pages per sheet, or a booklet ---------- */
 const PAPER = { a4: [595.28, 841.89], letter: [612, 792] };
 /* embedPage refuses a page with no Contents stream (a truly blank page) — give it an empty one first.
-   Its default bounding box is the MediaBox with no rotation, so pass the CropBox plus the matrix
-   that maps page coordinates into displayed (rotated) coordinates: BBox then equals what is seen. */
-const embedPage = (out, page) => {
+   Its BBox clips content in unrotated page space, so pass the CropBox itself; the Matrix rotates it
+   into displayed space. ep.width/height are then the display size, not the clipped CropBox's. */
+const embedPage = async (out, page) => {
   if (!page.node.has(PDFName.of("Contents"))) page.node.set(PDFName.of("Contents"), page.doc.context.obj([]));
   const cb = page.getCropBox(), R = ((page.getRotation().angle % 360) + 360) % 360, th = R * Math.PI / 180;
   const cw = R % 180 ? cb.height : cb.width, ch = R % 180 ? cb.width : cb.height;
-  const cos = Math.cos(th), sin = Math.sin(th), rot = (x, y) => [x * cos + y * sin, -x * sin + y * cos];
+  const z = v => Math.abs(v) < 1e-9 ? 0 : v, cos = z(Math.cos(th)), sin = z(Math.sin(th));
+  const rot = (x, y) => [x * cos + y * sin, -x * sin + y * cos];
   const cs = [[cb.x, cb.y], [cb.x + cb.width, cb.y], [cb.x + cb.width, cb.y + cb.height], [cb.x, cb.y + cb.height]].map(p => rot(...p));
   const minX = Math.min(...cs.map(c => c[0])), minY = Math.min(...cs.map(c => c[1]));
-  return out.embedPage(page, { left: 0, bottom: 0, right: cw, top: ch }, [cos, -sin, sin, cos, -minX, -minY]);
+  const ep = await out.embedPage(page, { left: cb.x, bottom: cb.y, right: cb.x + cb.width, top: cb.y + cb.height }, [cos, -sin, sin, cos, -minX, -minY]);
+  ep.width = cw; ep.height = ch;
+  return ep;
 };
 const placePage = (p, ep, cx, cy, cw, ch) => {
   const k = Math.min(cw / ep.width, ch / ep.height), w = ep.width * k, hh = ep.height * k;
