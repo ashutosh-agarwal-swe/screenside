@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Screenside PDF Tools</title>
 <meta name="referrer" content="no-referrer">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-7Ak1E5fzvMRxDFzwwQxobYpfKwVqhq7w4aCNsdelbV8=' 'wasm-unsafe-eval' blob:; worker-src blob:; child-src blob:; style-src 'unsafe-inline'; img-src blob: data:; connect-src 'none'; font-src 'none'; media-src 'none'; object-src 'none'; frame-src 'none'; manifest-src 'none'; form-action 'none'; base-uri 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-HoVNVeIR3BoZeq5ZGovk+2AlegZ8IZRp5jfQAL5odAc=' 'wasm-unsafe-eval' blob:; worker-src blob:; child-src blob:; style-src 'unsafe-inline'; img-src blob: data:; connect-src 'none'; font-src 'none'; media-src 'none'; object-src 'none'; frame-src 'none'; manifest-src 'none'; form-action 'none'; base-uri 'none'">
 <style>
 /* Layout idea: a light table. One fixed header, then a single view at a time: tool shelf, tool bench, page desk or page editor. */
 :root {
@@ -1110,7 +1110,7 @@ function odText(n) {
   let s = "";
   for (const c of n.childNodes) {
     if (c.nodeType === 3) s += c.nodeValue;
-    else if (c.nodeType === 1) s += c.tagName === "text:tab" ? "    " : c.tagName === "text:line-break" ? "\n" : c.tagName === "text:s" ? " ".repeat(+c.getAttribute("text:c") || 1) : /^(text:note|office:annotation)$/.test(c.tagName) ? "" : odText(c);
+    else if (c.nodeType === 1) s += c.tagName === "text:tab" ? "    " : c.tagName === "text:line-break" ? "\n" : c.tagName === "text:s" ? " ".repeat(Math.min(Math.max(+c.getAttribute("text:c") || 1, 1), 1000)) : /^(text:note|office:annotation)$/.test(c.tagName) ? "" : odText(c);
   }
   return s;
 }
@@ -1203,15 +1203,35 @@ async function epubBlocks(zip) {
   }
   return out;
 }
+/* zip-bomb guard: cap entry count and inflated bytes, shared across nested archives */
+const ZIP_MAX_BYTES = 200 * 1024 * 1024, ZIP_MAX_ENTRIES = 5000;
+function guardZip(zip, name, budget) {
+  const files = Object.values(zip.files);
+  const total = files.reduce((t, f) => t + (f._data?.uncompressedSize || 0), 0);
+  if (files.length > budget.entries || total > budget.bytes) throw new Error(`${name} unpacks to more than ${ZIP_MAX_BYTES / 1048576} MB or ${ZIP_MAX_ENTRIES} files, which is too large to convert here.`);
+  budget.entries -= files.length; budget.bytes -= total;
+  for (const f of files) {
+    const cap = f._data?.uncompressedSize || 0;
+    f.async = type => new Promise((res, rej) => {
+      const parts = []; let n = 0, done = false;
+      const st = f.internalStream("uint8array");
+      st.on("data", c => { if (done) return; n += c.length; if (n > cap) { done = true; st.pause(); rej(new Error(`${name} could not be opened. The file may be damaged.`)); } else parts.push(c); })
+        .on("error", e => { if (!done) { done = true; rej(e); } })
+        .on("end", () => { if (done) return; done = true; const u = new Uint8Array(n); let o = 0; for (const p of parts) { u.set(p, o); o += p.length; } res(type === "string" ? new TextDecoder().decode(u) : u); })
+        .resume();
+    });
+  }
+  return zip;
+}
 const TOPDF_EXT = ["docx", "odt", "rtf", "txt", "md", "csv", "tsv", "html", "htm", "xlsx", "ods", "pptx", "odp", "epub", "zip"];
 /* any supported file -> PDF bytes */
-async function anyToPdf(name, bytes, o = {}) {
+async function anyToPdf(name, bytes, o = {}, budget = { bytes: ZIP_MAX_BYTES, entries: ZIP_MAX_ENTRIES }) {
   const ext = extOf(name), file = () => new File([bytes], name);
   if (ext === "pdf") return bytes;
   if (/^(png|jpe?g|webp|gif|bmp)$/.test(ext)) return await imageToPdf(file());
   if (/^(doc|xls|ppt)$/.test(ext)) throw new Error(`${name}: old binary Office files cannot be read here. Save it as .${ext}x first.`);
   if (/^(pages|numbers|key)$/.test(ext)) {
-    let zip; try { zip = await JSZip.loadAsync(bytes); } catch { throw new Error(`${name} could not be opened. The file may be damaged.`); }
+    let zip; try { zip = await JSZip.loadAsync(bytes); } catch { throw new Error(`${name} could not be opened. The file may be damaged.`); } guardZip(zip, name, budget);
     const pv = Object.keys(zip.files).find(n => /(^|\/)QuickLook\/Preview\.pdf$/i.test(n)); if (pv) return await zip.files[pv].async("uint8array");
     const jp = Object.keys(zip.files).find(n => /(^|\/)preview\.jpe?g$/i.test(n));
     if (jp) return await imageToPdf(new File([await zip.files[jp].async("uint8array")], "preview.jpg", { type: "image/jpeg" }));
@@ -1224,7 +1244,7 @@ async function anyToPdf(name, bytes, o = {}) {
   else if (ext === "html" || ext === "htm") blocks = domToBlocks(new DOMParser().parseFromString(decodeText(bytes), "text/html").body);
   else if (ext === "rtf") blocks = txtBlocks(rtfText(new TextDecoder("latin1").decode(bytes))).map(b => ({ ...b, tight: false }));
   else if (TOPDF_EXT.includes(ext)) {
-    let zip; try { zip = await JSZip.loadAsync(bytes); } catch { throw new Error(`${name} could not be opened. The file may be damaged.`); }
+    let zip; try { zip = await JSZip.loadAsync(bytes); } catch { throw new Error(`${name} could not be opened. The file may be damaged.`); } guardZip(zip, name, budget);
     if (ext === "docx") blocks = await docxBlocks(zip);
     else if (ext === "xlsx") { blocks = await xlsxBlocks(zip); land ??= true; }
     else if (ext === "pptx") { blocks = await pptxBlocks(zip); land ??= true; }
@@ -1233,7 +1253,7 @@ async function anyToPdf(name, bytes, o = {}) {
       const out = await PDFDocument.create(); let n = 0;
       for (const en of Object.keys(zip.files).sort()) {
         const f = zip.files[en]; if (f.dir || /(^|\/)(\.|__MACOSX)/.test(en) || extOf(en) === "zip") continue;
-        try { const d = await loadDoc(await anyToPdf(en.split("/").pop(), await f.async("uint8array"), o)); for (const p of await out.copyPages(d, d.getPageIndices())) out.addPage(p); n++; } catch (e) { console.warn("skipped", en, e); }
+        try { const d = await loadDoc(await anyToPdf(en.split("/").pop(), await f.async("uint8array"), o, budget)); for (const p of await out.copyPages(d, d.getPageIndices())) out.addPage(p); n++; } catch (e) { console.warn("skipped", en, e); }
       }
       if (!n) throw new Error(`${name} holds no file that can be converted.`);
       return await out.save();
