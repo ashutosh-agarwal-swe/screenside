@@ -8,23 +8,26 @@ tool({ id: "metadata", name: "PDF Metadata", cat: "sec", icon: "form",
   note: "Emptying a box deletes that detail from the saved copy. The hidden metadata block (XMP) is always dropped. The inspector lists what a file carries now.",
   accept: ["pdf"], verb: "Save metadata",
   async prepare([f], opts) {
-    const doc = await freshDoc(f), get = k => { try { return cleanText(doc.getInfoDict().lookup(PDFName.of(k))?.decodeText?.() ?? ""); } catch { return ""; } };
-    const dyn = META_FIELDS.map(([key, label]) => ({ id: "m_" + key.toLowerCase(), label, type: "text", default: key === "Keywords" ? get("Keywords").split(/;\s*/).join(", ") : get(key) }));
+    let doc; try { doc = repairStreams(await PDFDocument.load(f.bytes, { updateMetadata: false })); } catch (e) { throw pdfError(e); }
+    const get = k => { try { return cleanText(doc.getInfoDict().lookup(PDFName.of(k))?.decodeText?.() ?? ""); } catch { return ""; } };
+    const dyn = META_FIELDS.map(([key, label]) => ({ id: "m_" + key.toLowerCase(), label, type: "text", default: get(key) }));
     for (const d of dyn) opts[d.id] = d.default;
     const date = d => d ? ` ${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}` : " not recorded";
     dyn.push({ type: "info", label: "Dates: created" + date(doc.getCreationDate()) + " · last changed" + date(doc.getModificationDate()) + ". Dates stay as they are in the saved copy.", wide: true });
     return dyn;
   },
   async run({ files: [f], opts: o }) {
-    const doc = await freshDoc(f), info = doc.getInfoDict(), N = s => PDFName.of(s);
+    let doc; try { doc = repairStreams(await PDFDocument.load(f.bytes, { updateMetadata: false })); } catch (e) { throw pdfError(e); }
+    const info = doc.getInfoDict(), N = s => PDFName.of(s);
     const set = { title: v => doc.setTitle(v), author: v => doc.setAuthor(v), subject: v => doc.setSubject(v),
       keywords: v => doc.setKeywords(v.split(",").map(s => s.trim()).filter(Boolean)), creator: v => doc.setCreator(v), producer: v => doc.setProducer(v) };
     for (const [key] of META_FIELDS) {
       const v = cleanText(o["m_" + key.toLowerCase()] || "").trim();
       if (v) set[key.toLowerCase()](v); else info.delete(N(key));
     }
+    const meta = doc.catalog.get(N("Metadata"));
+    if (meta instanceof PDFRef) { const st = doc.context.lookup(meta); if (st instanceof PL.PDFStream) doc.context.assign(meta, PDFRawStream.of(st.dict, new Uint8Array(0))); }
     doc.catalog.delete(N("Metadata"));
-    doc.setModificationDate(new Date());
     return { files: [one(f, "-metadata", await doc.save({ useObjectStreams: false }))], note: "Metadata updated" };
   } });
 
@@ -69,8 +72,18 @@ tool({ id: "extract-images", name: "Extract Images", cat: "conv", icon: "copy",
 
 /* ---------- several pages per sheet, or a booklet ---------- */
 const PAPER = { a4: [595.28, 841.89], letter: [612, 792] };
-/* embedPage refuses a page with no Contents stream (a truly blank page) — give it an empty one first */
-const embedPage = (out, page) => { if (!page.node.has(PDFName.of("Contents"))) page.node.set(PDFName.of("Contents"), page.doc.context.obj([])); return out.embedPage(page); };
+/* embedPage refuses a page with no Contents stream (a truly blank page) — give it an empty one first.
+   Its default bounding box is the MediaBox with no rotation, so pass the CropBox plus the matrix
+   that maps page coordinates into displayed (rotated) coordinates: BBox then equals what is seen. */
+const embedPage = (out, page) => {
+  if (!page.node.has(PDFName.of("Contents"))) page.node.set(PDFName.of("Contents"), page.doc.context.obj([]));
+  const cb = page.getCropBox(), R = ((page.getRotation().angle % 360) + 360) % 360, th = R * Math.PI / 180;
+  const cw = R % 180 ? cb.height : cb.width, ch = R % 180 ? cb.width : cb.height;
+  const cos = Math.cos(th), sin = Math.sin(th), rot = (x, y) => [x * cos + y * sin, -x * sin + y * cos];
+  const cs = [[cb.x, cb.y], [cb.x + cb.width, cb.y], [cb.x + cb.width, cb.y + cb.height], [cb.x, cb.y + cb.height]].map(p => rot(...p));
+  const minX = Math.min(...cs.map(c => c[0])), minY = Math.min(...cs.map(c => c[1]));
+  return out.embedPage(page, { left: 0, bottom: 0, right: cw, top: ch }, [cos, -sin, sin, cos, -minX, -minY]);
+};
 const placePage = (p, ep, cx, cy, cw, ch) => {
   const k = Math.min(cw / ep.width, ch / ep.height), w = ep.width * k, hh = ep.height * k;
   p.drawPage(ep, { x: cx + (cw - w) / 2, y: cy + (ch - hh) / 2, width: w, height: hh });
@@ -193,12 +206,12 @@ async function skewAngle(cv) {
     sc.setTransform(1, 0, 0, 1, 0, 0); sc.clearRect(0, 0, w, hh);
     sc.translate(w / 2, hh / 2); sc.rotate(deg * Math.PI / 180); sc.drawImage(a, -w / 2, -hh / 2);
     const d = sc.getImageData(0, 0, w, hh).data, rows = new Float64Array(hh);
-    for (let y = 0; y < hh; y++) { let s = 0; for (let x = 0; x < w; x++) { const i = (y * w + x) * 4; if ((d[i] * 77 + d[i + 1] * 150 + d[i + 2] * 29) >> 8 < 150) s++; } rows[y] = s; }
+    for (let y = 0; y < hh; y++) { let s = 0; for (let x = 0; x < w; x++) { const i = (y * w + x) * 4; if (d[i + 3] > 100 && (d[i] * 77 + d[i + 1] * 150 + d[i + 2] * 29) >> 8 < 150) s++; } rows[y] = s; }
     let m = 0; for (const r of rows) m += r; m /= hh; let v = 0; for (const r of rows) v += (r - m) * (r - m);
     return v;
   };
-  let best = 0, bs = -1;
-  for (let deg = -4; deg <= 4; deg += 0.25) { const s = score(deg); if (s > bs) { bs = s; best = deg; } }
+  const s0 = score(0); let best = 0, bs = s0;
+  for (let deg = -4; deg <= 4; deg += 0.25) { if (!deg) continue; const s = score(deg); if (s > s0 * 1.02 && s > bs) { bs = s; best = deg; } }
   return best;
 }
 tool({ id: "deskew", name: "Straighten a Scan", cat: "conv", icon: "rotL",
