@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Screenside PDF Tools</title>
 <meta name="referrer" content="no-referrer">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-C3NYt9ppu0YzatigAbhK2jHXQSkAqrK0DgKHLdvZmYQ=' 'wasm-unsafe-eval' blob:; worker-src blob:; child-src blob:; style-src 'unsafe-inline'; img-src blob: data:; connect-src 'none'; font-src 'none'; media-src 'none'; object-src 'none'; frame-src 'none'; manifest-src 'none'; form-action 'none'; base-uri 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-esxtotzSooYfbtpa4b1DRg/50fg4uc7swtZ2Um/9F8w=' 'wasm-unsafe-eval' blob:; worker-src blob:; child-src blob:; style-src 'unsafe-inline'; img-src blob: data:; connect-src 'none'; font-src 'none'; media-src 'none'; object-src 'none'; frame-src 'none'; manifest-src 'none'; form-action 'none'; base-uri 'none'">
 <style>
 /* Layout idea: a light table. One fixed header, then a single view at a time: tool shelf, tool bench, page desk or page editor. */
 :root {
@@ -2252,12 +2252,16 @@ if (!OCR_EMBEDDED) {
       fixDict(node, N("Parent"));
     }
   }
-  function relinkPages(out, tag) {
-    const to = new Map(out.getPages().map((p, i) => [PDFName.of(tag + i), p.ref]));
+  /* A rebuilt page has a new, unrotated box, so a destination's old view coordinates would land in the wrong place: show the whole page instead. */
+  function relinkPages(out, tag, keep) {
+    const to = new Map(out.getPages().map((p, i) => [PDFName.of(tag + i), p.ref])), rebuilt = new Set(out.getPages().map((_, i) => i).filter(i => !keep.includes(i)).map(i => PDFName.of(tag + i)));
     const walk = o => {
       if (o?.dict instanceof PDFDict) o = o.dict;
       if (o instanceof PDFDict) { for (const [k, v] of o.entries()) { if (to.has(v)) o.set(k, to.get(v)); else walk(v); } }
-      else if (o instanceof PDFArray) for (let j = 0; j < o.size(); j++) { const v = o.get(j); if (to.has(v)) o.set(j, to.get(v)); else walk(v); }
+      else if (o instanceof PDFArray) {
+        if (rebuilt.has(o.get(0)) && o.size() > 1) { while (o.size() > 1) o.remove(1); o.push(PDFName.of("Fit")); }
+        for (let j = 0; j < o.size(); j++) { const v = o.get(j); if (to.has(v)) o.set(j, to.get(v)); else walk(v); }
+      }
     };
     for (const [, o] of out.context.enumerateIndirectObjects()) walk(o);
   }
@@ -2282,7 +2286,7 @@ if (!OCR_EMBEDDED) {
       for (const b of boxes) c.fillRect(b.x * scale, b.y * scale, b.w * scale, b.h * scale);
       const img = await out.embedJpg(await canvasBytes(cv, "image/jpeg", 0.9)); out.addPage([P.w, P.h]).drawImage(img, { x: 0, y: 0, width: P.w, height: P.h });
     }
-    relinkPages(out, tag);
+    relinkPages(out, tag, keep);
     return onlyOwnPages(out) ? out : null;
   }
   async function exportRedact() {

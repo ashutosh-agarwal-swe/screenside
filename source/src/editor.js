@@ -318,12 +318,16 @@
       fixDict(node, N("Parent"));
     }
   }
-  function relinkPages(out, tag) {
-    const to = new Map(out.getPages().map((p, i) => [PDFName.of(tag + i), p.ref]));
+  /* A rebuilt page has a new, unrotated box, so a destination's old view coordinates would land in the wrong place: show the whole page instead. */
+  function relinkPages(out, tag, keep) {
+    const to = new Map(out.getPages().map((p, i) => [PDFName.of(tag + i), p.ref])), rebuilt = new Set(out.getPages().map((_, i) => i).filter(i => !keep.includes(i)).map(i => PDFName.of(tag + i)));
     const walk = o => {
       if (o?.dict instanceof PDFDict) o = o.dict;
       if (o instanceof PDFDict) { for (const [k, v] of o.entries()) { if (to.has(v)) o.set(k, to.get(v)); else walk(v); } }
-      else if (o instanceof PDFArray) for (let j = 0; j < o.size(); j++) { const v = o.get(j); if (to.has(v)) o.set(j, to.get(v)); else walk(v); }
+      else if (o instanceof PDFArray) {
+        if (rebuilt.has(o.get(0)) && o.size() > 1) { while (o.size() > 1) o.remove(1); o.push(PDFName.of("Fit")); }
+        for (let j = 0; j < o.size(); j++) { const v = o.get(j); if (to.has(v)) o.set(j, to.get(v)); else walk(v); }
+      }
     };
     for (const [, o] of out.context.enumerateIndirectObjects()) walk(o);
   }
@@ -348,7 +352,7 @@
       for (const b of boxes) c.fillRect(b.x * scale, b.y * scale, b.w * scale, b.h * scale);
       const img = await out.embedJpg(await canvasBytes(cv, "image/jpeg", 0.9)); out.addPage([P.w, P.h]).drawImage(img, { x: 0, y: 0, width: P.w, height: P.h });
     }
-    relinkPages(out, tag);
+    relinkPages(out, tag, keep);
     return onlyOwnPages(out) ? out : null;
   }
   async function exportRedact() {
