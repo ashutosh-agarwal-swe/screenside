@@ -392,11 +392,13 @@ async function epubBlocks(zip) {
 const ZIP_MAX_BYTES = 200 * 1024 * 1024, ZIP_MAX_ENTRIES = 5000;
 function guardZip(zip, name, budget) {
   const files = Object.values(zip.files);
-  const total = files.reduce((t, f) => t + (f._data?.uncompressedSize || 0), 0);
-  if (files.length > budget.entries || total > budget.bytes) throw new Error(`${name} unpacks to more than ${ZIP_MAX_BYTES / 1048576} MB or ${ZIP_MAX_ENTRIES} files, which is too large to convert here.`);
+  const sizes = files.map(f => f._data?.uncompressedSize ?? 0);
+  if (sizes.some(n => !Number.isSafeInteger(n) || n < 0)) throw new Error(`${name} could not be opened. The file may be damaged.`);
+  const total = sizes.reduce((t, n) => t + n, 0);
+  if (files.length > budget.entries || total > budget.bytes) throw Object.assign(new Error(`${name} unpacks to more than ${ZIP_MAX_BYTES / 1048576} MB or ${ZIP_MAX_ENTRIES} files, which is too large to convert here.`), { tooLarge: true });
   budget.entries -= files.length; budget.bytes -= total;
   for (const f of files) {
-    const cap = f._data?.uncompressedSize || 0;
+    const cap = f._data?.uncompressedSize ?? 0;
     f.async = type => new Promise((res, rej) => {
       const parts = []; let n = 0, done = false;
       const st = f.internalStream("uint8array");
