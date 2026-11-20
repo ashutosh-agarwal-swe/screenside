@@ -2,7 +2,7 @@
 
 Free PDF tools that run entirely in your browser. Nothing is uploaded.
 
-Merge, split, organize, rotate, compress, convert, edit, annotate, sign, redact, crop, number, watermark, fill forms, protect and unlock PDFs, check a PDF for hidden personal details, fit a file under an upload limit, and make scans searchable in English or French. 36 tools.
+Merge, split, organize, rotate, compress, convert, edit, annotate, sign, redact, crop, number, watermark, stamp Bates numbers, fill forms, protect and unlock PDFs, inspect or wipe the personal details stored inside a file, pull embedded pictures out, arrange pages for print or a booklet, fit every page to one paper size, convert to greyscale, repair damaged files, fit a file under an upload limit, straighten crooked scans, and make scans searchable in English or French. 41 tools.
 
 **Site:** https://screenside.ca
 
