@@ -440,7 +440,7 @@ async function anyToPdf(name, bytes, o = {}, budget = { bytes: ZIP_MAX_BYTES, en
       const out = await PDFDocument.create(); let n = 0;
       for (const en of Object.keys(zip.files).sort()) {
         const f = zip.files[en]; if (f.dir || /(^|\/)(\.|__MACOSX)/.test(en) || extOf(en) === "zip") continue;
-        try { const d = await loadDoc(await anyToPdf(en.split("/").pop(), await f.async("uint8array"), o, budget)); for (const p of await out.copyPages(d, d.getPageIndices())) out.addPage(p); n++; } catch (e) { console.warn("skipped", en, e); }
+        try { const d = await loadDoc(await anyToPdf(en.split("/").pop(), await f.async("uint8array"), o, budget)); for (const p of await out.copyPages(d, d.getPageIndices())) out.addPage(p); n++; } catch (e) { if (e.tooLarge) throw e; console.warn("skipped", en, e); }
       }
       if (!n) throw new Error(`${name} holds no file that can be converted.`);
       return await out.save();
