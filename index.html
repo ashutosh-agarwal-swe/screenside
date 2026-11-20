@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Screenside PDF Tools</title>
 <meta name="referrer" content="no-referrer">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-95OQ7+Cpy6EthFgNjkrMqrq5v+IdUeOVML++eYWIVOg=' 'wasm-unsafe-eval' blob:; worker-src blob:; child-src blob:; style-src 'unsafe-inline'; img-src blob: data:; connect-src 'none'; font-src 'none'; media-src 'none'; object-src 'none'; frame-src 'none'; manifest-src 'none'; form-action 'none'; base-uri 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-74HNfGyxcD4ukCjLZqTNm2RaM4WZKWOnhcK1f+a8pJg=' 'wasm-unsafe-eval' blob:; worker-src blob:; child-src blob:; style-src 'unsafe-inline'; img-src blob: data:; connect-src 'none'; font-src 'none'; media-src 'none'; object-src 'none'; frame-src 'none'; manifest-src 'none'; form-action 'none'; base-uri 'none'">
 <style>
 /* Layout idea: a light table. One fixed header, then a single view at a time: tool shelf, tool bench, page desk or page editor. */
 :root {
@@ -644,9 +644,58 @@ async function rasterize(js, { dpi = 150, quality = 0.8, progress, paint } = {})
   }
   return await out.save();
 }
+/* copyPages follows every reference on a kept page, so a link, an annotation /P or a form field that points at
+   another page would pull in that page and, through its /Parent, the whole source tree with the removed pages.
+   Point kept pages at their new copies and everything else page-shaped at null, then check nothing slipped in.
+   A kept widget's /Parent also leads into the form-field tree, whose /Kids list fields on removed pages too: copy
+   those fields with only the kids that lead to a widget on a kept page, and drop the value of a field that loses kids. */
 async function subsetPdf(doc, indices) {
-  const out = await PDFDocument.create();
-  for (const p of await out.copyPages(doc, indices)) out.addPage(p);
+  await doc.flush();
+  const out = await PDFDocument.create(), ctx = out.context, N = s => PDFName.of(s), pages = doc.getPages();
+  const typeOf = o => { const t = o instanceof PDFDict && o.lookup(N("Type")); return t instanceof PDFName ? t.decodeText() : null; };
+  const kept = new Map(indices.map(i => [pages[i].ref, null])), gone = new Set([doc.context.trailerInfo.Root]);
+  for (const p of pages) {
+    for (let n = p.node, r; (r = n.get(N("Parent"))) instanceof PDFRef && !gone.has(r); n = doc.context.lookup(r)) gone.add(r);
+    if (!kept.has(p.ref)) { gone.add(p.ref); for (const a of p.node.Annots()?.asArray() ?? []) if (a instanceof PDFRef) gone.add(a); }
+  }
+  for (const [ref, o] of doc.context.enumerateIndirectObjects())
+    if (!kept.has(ref) && (["Page", "Pages", "Catalog"].includes(typeOf(o)) || o instanceof PDFDict && gone.has(o.get(N("P"))))) gone.add(ref);
+  const copier = PL.PDFObjectCopier.for(doc.context, ctx), nil = ctx.register(PL.PDFNull);
+  for (const r of gone) copier.traversedObjects.set(r, nil);
+  for (const r of kept.keys()) { const nr = ctx.nextRef(); kept.set(r, nr); copier.traversedObjects.set(r, nr); }
+  const own = new Set(indices.flatMap(i => pages[i].node.Annots()?.asArray() ?? []).filter(a => a instanceof PDFRef && !gone.has(a)));
+  const live = (r, done = new Set()) => {
+    if (!(r instanceof PDFRef) || gone.has(r) || done.has(r)) return false; if (own.has(r)) return true; done.add(r);
+    const k = doc.context.lookup(r)?.lookup?.(N("Kids")); return k instanceof PDFArray && k.asArray().some(x => live(x, done));
+  };
+  const fields = new Map(), field = r => { if (r instanceof PDFRef && !gone.has(r) && !fields.has(r)) { fields.set(r, null); return true; } };
+  for (const a of own) for (let d = doc.context.lookup(a), p; d instanceof PDFDict && field(p = d.get(N("Parent"))); d = doc.context.lookup(p));
+  for (const r of fields.keys()) {
+    const d = doc.context.lookup(r), kids = d instanceof PDFDict && d.lookup(N("Kids"));
+    if (!(kids instanceof PDFArray)) { fields.delete(r); continue; }
+    const k = kids.asArray().filter(x => live(x)), c = d.clone(doc.context);
+    for (const x of k) if (doc.context.lookup(x)?.lookup?.(N("Kids")) instanceof PDFArray) field(x);
+    c.set(N("Kids"), doc.context.obj(k)); if (k.length < kids.size()) for (const x of ["V", "DV", "RV"]) c.delete(N(x));
+    const nr = ctx.nextRef(); fields.set(r, [nr, c]); copier.traversedObjects.set(r, nr);
+  }
+  for (const [nr, c] of fields.values()) ctx.assign(nr, copier.copy(c));
+  const dead = a => {
+    const d = ctx.lookup(a); if (!(d instanceof PDFDict)) return true;
+    if (d.lookup(N("Subtype")) !== N("Link")) return false;
+    const act = d.lookup(N("A")), dest = d.lookup(N("Dest")) ?? (act instanceof PDFDict ? act.lookup(N("D")) : undefined);
+    return dest instanceof PDFArray && dest.get(0) === nil;
+  };
+  for (const i of indices) {
+    const src = pages[i], node = copier.copy(src.node);
+    let ref = kept.get(src.ref); if (ctx.lookup(ref)) ref = ctx.nextRef();
+    const annots = node.lookup(N("Annots"));
+    if (annots instanceof PDFArray) { const live = annots.asArray().filter(a => !dead(a)); live.length ? node.set(N("Annots"), ctx.obj(live)) : node.delete(N("Annots")); }
+    ctx.assign(ref, node); out.addPage(PL.PDFPage.of(node, ref, out));
+  }
+  const ok = new Set([ctx.trailerInfo.Root, ...out.getPages().map(p => p.ref)]);
+  for (const p of out.getPages()) for (let n = p.node, r; (r = n.get(N("Parent"))) instanceof PDFRef && !ok.has(r); n = ctx.lookup(r)) ok.add(r);
+  for (const [ref, o] of ctx.enumerateIndirectObjects())
+    if (["Page", "Pages", "Catalog"].includes(typeOf(o)) && !ok.has(ref)) throw new Error("Could not separate the chosen pages from the rest of this PDF.");
   return await out.save();
 }
 
@@ -1627,7 +1676,7 @@ tool({ id: "form-filler", name: "PDF Form Filler", cat: "edit", icon: "form", de
 tool({ id: "edit", name: "Edit PDF", cat: "edit", icon: "pen", desc: "Add text, shapes, pictures and freehand marks on top of the pages.", note: "Adds content on top of the page. Existing text is covered with the whiteout tool, not rewritten.", accept: ["pdf"], editor: "edit" });
 tool({ id: "annotate", name: "PDF Annotator", cat: "edit", icon: "mark", desc: "Highlight, draw and write notes on a PDF.", accept: ["pdf"], editor: "annotate" });
 tool({ id: "reader", name: "PDF Reader", cat: "edit", icon: "eye", desc: "Open and read a PDF, with zoom.", accept: ["pdf"], editor: "read" });
-tool({ id: "crop", name: "Crop PDF", cat: "edit", icon: "crop", desc: "Drag a box around what to keep and trim away the rest.", accept: ["pdf"], editor: "crop" });
+tool({ id: "crop", name: "Crop PDF", cat: "edit", icon: "crop", desc: "Drag a box around what to keep and hide the rest from view.", note: "Cropping only changes the visible area. The content outside the box stays in the file and anyone can bring it back. To remove it for good, use Redact PDF.", accept: ["pdf"], editor: "crop" });
 tool({ id: "redact", name: "Redact PDF", cat: "edit", icon: "bar", desc: "Black out sensitive areas for good.", note: "Each page you mark is rebuilt as a picture with the boxes burned in, so the hidden text is gone from the file, not just covered.", accept: ["pdf"], editor: "redact" });
 
 /* Sign and protect */
@@ -2326,7 +2375,7 @@ if (!OCR_EMBEDDED) {
       const [ax, ay] = viewToPdf(v, x, v.H - y), [bx, by] = viewToPdf(v, x + w, v.H - y - hh), box = [Math.min(ax, bx), Math.min(ay, by), Math.abs(bx - ax), Math.abs(by - ay)];
       page.setMediaBox(...box); page.setCropBox(...box); n++;
     });
-    return { data: await doc.save(), note: `Cropped ${n} page${n === 1 ? "" : "s"}` };
+    return { data: await doc.save(), note: `Cropped ${n} page${n === 1 ? "" : "s"}. The content outside the box is hidden, not removed. Use Redact PDF to remove it` };
   }
   async function finish() {
     commitText(); const mode = ED.mode, need = mode === "redact" ? "redact" : mode === "crop" ? "crop" : null;
