@@ -42,15 +42,12 @@ const ICON = {
   pen: "M4 20l4-1L19 8l-3-3L5 16zM14 7l3 3", text: "M5 6V4h14v2M12 4v16M9 20h6", crop: "M7 3v14h14M3 7h14v14",
   drop: "M12 3s6 6.5 6 11a6 6 0 0 1-12 0c0-4.500 6-11 6-11z", hash: "M9 4 7 20M17 4l-2 16M4 9h16M3.500 15h16",
   eye: "M2.500 12S6 5.500 12 5.500 21.500 12 21.500 12 18 18.500 12 18.500 2.500 12 2.500 12zM12 9.500a2.500 2.500 0 1 0 0 5 2.500 2.500 0 0 0 0-5z",
-  chat: "M4 5h16v11H9l-5 4z", spark: "M12 3l1.800 5.200L19 10l-5.200 1.800L12 17l-1.800-5.200L5 10l5.200-1.800z",
-  globe: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM3 12h18M12 3c2.500 2.700 2.500 15.300 0 18M12 3c-2.500 2.700-2.500 15.300 0 18",
-  quiz: "M9.500 9a2.500 2.500 0 1 1 3.500 2.300c-.700.400-1 .900-1 1.700M12 17h.010M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z",
   image: "M4 5h16v14H4zM4 16l5-5 4 4 3-3 4 4", table: "M4 5h16v14H4zM4 10h16M4 15h16M10 5v14", slides: "M3 5h18v12H3zM12 17v4M8 21h8",
   form: "M5 4h14v16H5zM8 9h8M8 13h8M8 17h4", layers: "M12 4 3 9l9 5 9-5zM3 14l9 5 9-5", bar: "M3 9h18v6H3z",
   grid: "M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z", swap: "M4 8h14l-3-3M20 16H6l3 3",
   sign: "M3 17c3-6 5-9 7-9s0 8 2 8 3-5 5-5 2 4 4 4M3 21h18", scan: "M4 8V4h4M16 4h4v4M20 16v4h-4M8 20H4v-4M8 12h8",
   cursor: "M6 4l11 8-5 1.200L10 19z", rect: "M4 6h16v12H4z", circle: "M12 5a7 7 0 1 0 0 14 7 7 0 0 0 0-14z", mark: "M5 15l9-9 4 4-9 9H5zM4 21h16",
-  white: "M5 8h14v8H5zM3 20h18", back: "M11 6l-6 6 6 6M5 12h14", send: "M4 12l16-8-6 16-3-7z", stop: "M7 7h10v10H7z",
+  white: "M5 8h14v8H5zM3 20h18", back: "M11 6l-6 6 6 6M5 12h14",
 };
 const ic = n => `<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="${ICON[n] || ICON.file}"/></svg>`;
 const fmtSize = n => n > 1048576 ? (n / 1048576).toFixed(n > 10485760 ? 0 : 1) + " MB" : Math.max(1, Math.round(n / 1024)) + " KB";

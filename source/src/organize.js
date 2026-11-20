@@ -3,26 +3,6 @@
 
 
 /* ---------- icons ---------- */
-const P = {
-  rotR: "M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7",
-  rotL: "M4 11a8 8 0 1 1 2.3 5.7M4 4v7h7",
-  copy: "M9 9h11v11H9zM5 15V6a2 2 0 0 1 2-2h9",
-  trash: "M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6",
-  zoom: "M11 5a6 6 0 1 0 0 12 6 6 0 0 0 0-12zM20 20l-4.6-4.6",
-  plus: "M12 5v14M5 12h14",
-  undo: "M9 14 4 9l5-5M4 9h10a6 6 0 0 1 0 12h-3",
-  redo: "m15 14 5-5-5-5M20 9H10a6 6 0 0 0 0 12h3",
-  check: "m5 12.5 4.5 4.5L19 7.5",
-  down: "M12 4v11M7 11l5 5 5-5M5 20h14",
-  file: "M7 3h7l5 5v13H7zM14 3v5h5",
-  rev: "M7 4v16M7 20l-3-3M7 20l3-3M17 20V4M17 4l-3 3M17 4l3 3",
-  x: "M6 6l12 12M18 6 6 18",
-  prev: "m15 5-7 7 7 7",
-  next: "m9 5 7 7-7 7",
-};
-const ic = n => `<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="${P[n]}"/></svg>`;
-const $ = id => document.getElementById(id);
-const esc = s => String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
 $("undoBtn").innerHTML = ic("undo"); $("redoBtn").innerHTML = ic("redo");
 $("finishBtn").innerHTML = ic("down") + "Finish";
@@ -51,10 +31,6 @@ const grid = $("grid"), desk = $("desk");
 const keyOf = p => p.src + ":" + p.index;
 const pid = () => "p" + (++seq);
 
-function toast(msg, ms = 4200) {
-  const t = document.createElement("div"); t.className = "toast"; t.textContent = msg;
-  $("toasts").append(t); setTimeout(() => t.remove(), ms);
-}
 const snapshot = () => ({ pages: pages.map(p => ({ ...p })), sel: [...selection], sample: sampleActive });
 function restore(s) { pages = s.pages.map(p => ({ ...p })); selection = new Set(s.sel); sampleActive = s.sample; render(); }
 function mutate(fn) {
@@ -183,21 +159,6 @@ function kindOf(f) {
   if (f.type.startsWith("image/") || /\.(png|jpe?g|webp|gif|bmp)$/.test(n)) return "image";
   if (/\.(docx?|xlsx?|pptx?|odt|ods|odp|rtf)$/.test(n)) return "office";
   return "other";
-}
-async function imageToPdf(f) {
-  const doc = await PDFDocument.create(); let img;
-  const n = f.name.toLowerCase(), buf = await f.arrayBuffer();
-  if (f.type === "image/jpeg" || /\.jpe?g$/.test(n)) img = await doc.embedJpg(buf);
-  else if (f.type === "image/png" || n.endsWith(".png")) img = await doc.embedPng(buf);
-  else {
-    const bmp = await createImageBitmap(f), cv = document.createElement("canvas");
-    cv.width = bmp.width; cv.height = bmp.height; cv.getContext("2d").drawImage(bmp, 0, 0);
-    const blob = await new Promise(r => cv.toBlob(r, "image/png"));
-    img = await doc.embedPng(await blob.arrayBuffer());
-  }
-  const k = 842 / Math.max(img.width, img.height), w = img.width * k, h = img.height * k;
-  doc.addPage([w, h]).drawImage(img, { x: 0, y: 0, width: w, height: h });
-  return await doc.save();
 }
 async function registerSource(name, bytes, extra = {}) {
   const doc = repairStreams(await PDFDocument.load(bytes));
@@ -519,7 +480,6 @@ async function buildPdf(list) {
   out.setProducer("Screenside"); out.setModificationDate(new Date());
   return await out.save();
 }
-const fmtSize = n => n > 1048576 ? (n / 1048576).toFixed(1) + " MB" : Math.max(1, Math.round(n / 1024)) + " KB";
 function openExport() {
   if (!pages.length) return;
   const first = pages.find(p => p.kind === "pdf" && !sources.get(p.src).sample);
@@ -537,7 +497,6 @@ function setNote(t, err) { $("exNote").textContent = t; $("exNote").classList.to
 $("fname").addEventListener("input", e => e.target.dataset.touched = "1");
 $("finishBtn").onclick = openExport; $("exCancel").onclick = closeExport;
 $("exportVeil").addEventListener("click", e => { if (e.target.id === "exportVeil") closeExport(); });
-const downloadsReady = (async () => { try { return window.claude?.use ? await window.claude.use("downloads") : null; } catch { return null; } })();
 $("exGo").onclick = async () => {
   let name = $("fname").value.trim().replace(/[\\/:*?"<>|]+/g, "-") || "organized";
   if (!/\.pdf$/i.test(name)) name += ".pdf";
