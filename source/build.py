@@ -20,7 +20,7 @@ site = json.loads((here / "site.json").read_text(encoding="utf-8"))
 for key in ("kofi", "source"):
     assert site[key] == "" or site[key].startswith("https://"), f"site.json: {key} must be empty or an https:// link"
 
-PARTS = ["core.js", "toolview.js", "convert.js", "crypto.js", "tools.js", "tools2.js", "ocr.js", "editor.js", "organize.js", "boot.js"]
+PARTS = ["core.js", "toolview.js", "convert.js", "crypto.js", "tools.js", "tools2.js", "tools3.js", "ocr.js", "editor.js", "organize.js", "boot.js"]
 APP = "\n".join(f"/* ===== {p} ===== */\n" + (src / p).read_text(encoding="utf-8") for p in PARTS)
 APP = re.sub(r"/\*SITE\*/.*?/\*ENDSITE\*/", lambda m: json.dumps(site), APP, flags=re.S)
 HEAD = (src / "head.html").read_text(encoding="utf-8")
