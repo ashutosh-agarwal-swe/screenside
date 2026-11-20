@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Screenside PDF Tools</title>
 <meta name="referrer" content="no-referrer">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-HoVNVeIR3BoZeq5ZGovk+2AlegZ8IZRp5jfQAL5odAc=' 'wasm-unsafe-eval' blob:; worker-src blob:; child-src blob:; style-src 'unsafe-inline'; img-src blob: data:; connect-src 'none'; font-src 'none'; media-src 'none'; object-src 'none'; frame-src 'none'; manifest-src 'none'; form-action 'none'; base-uri 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-cX93YHIyVtxWyOIwB3LcbpMA8T7o+fV2BJoWzGKpZN8=' 'wasm-unsafe-eval' blob:; worker-src blob:; child-src blob:; style-src 'unsafe-inline'; img-src blob: data:; connect-src 'none'; font-src 'none'; media-src 'none'; object-src 'none'; frame-src 'none'; manifest-src 'none'; form-action 'none'; base-uri 'none'">
 <style>
 /* Layout idea: a light table. One fixed header, then a single view at a time: tool shelf, tool bench, page desk or page editor. */
 :root {
@@ -1207,11 +1207,13 @@ async function epubBlocks(zip) {
 const ZIP_MAX_BYTES = 200 * 1024 * 1024, ZIP_MAX_ENTRIES = 5000;
 function guardZip(zip, name, budget) {
   const files = Object.values(zip.files);
-  const total = files.reduce((t, f) => t + (f._data?.uncompressedSize || 0), 0);
-  if (files.length > budget.entries || total > budget.bytes) throw new Error(`${name} unpacks to more than ${ZIP_MAX_BYTES / 1048576} MB or ${ZIP_MAX_ENTRIES} files, which is too large to convert here.`);
+  const sizes = files.map(f => f._data?.uncompressedSize ?? 0);
+  if (sizes.some(n => !Number.isSafeInteger(n) || n < 0)) throw new Error(`${name} could not be opened. The file may be damaged.`);
+  const total = sizes.reduce((t, n) => t + n, 0);
+  if (files.length > budget.entries || total > budget.bytes) throw Object.assign(new Error(`${name} unpacks to more than ${ZIP_MAX_BYTES / 1048576} MB or ${ZIP_MAX_ENTRIES} files, which is too large to convert here.`), { tooLarge: true });
   budget.entries -= files.length; budget.bytes -= total;
   for (const f of files) {
-    const cap = f._data?.uncompressedSize || 0;
+    const cap = f._data?.uncompressedSize ?? 0;
     f.async = type => new Promise((res, rej) => {
       const parts = []; let n = 0, done = false;
       const st = f.internalStream("uint8array");
@@ -1253,7 +1255,7 @@ async function anyToPdf(name, bytes, o = {}, budget = { bytes: ZIP_MAX_BYTES, en
       const out = await PDFDocument.create(); let n = 0;
       for (const en of Object.keys(zip.files).sort()) {
         const f = zip.files[en]; if (f.dir || /(^|\/)(\.|__MACOSX)/.test(en) || extOf(en) === "zip") continue;
-        try { const d = await loadDoc(await anyToPdf(en.split("/").pop(), await f.async("uint8array"), o, budget)); for (const p of await out.copyPages(d, d.getPageIndices())) out.addPage(p); n++; } catch (e) { console.warn("skipped", en, e); }
+        try { const d = await loadDoc(await anyToPdf(en.split("/").pop(), await f.async("uint8array"), o, budget)); for (const p of await out.copyPages(d, d.getPageIndices())) out.addPage(p); n++; } catch (e) { if (e.tooLarge) throw e; console.warn("skipped", en, e); }
       }
       if (!n) throw new Error(`${name} holds no file that can be converted.`);
       return await out.save();
