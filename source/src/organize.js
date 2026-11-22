@@ -504,21 +504,11 @@ $("exGo").onclick = async () => {
   $("exGo").disabled = true; setNote("Building your PDF…");
   try {
     const bytes = await buildPdf(list);
-    const blob = new Blob([bytes], { type: "application/pdf" });
-    setNote(`Ready: ${list.length} page${list.length === 1 ? "" : "s"}, ${fmtSize(bytes.length)}. Confirm the download when asked.`);
-    const dl = await downloadsReady;
-    if (dl) await dl.save({ filename: name, data: blob });
-    else {
-      const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name;
-      document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 60000);
-    }
+    await saveFile(name, new Blob([bytes], { type: "application/pdf" }));
     setNote(`Saved ${name} (${list.length} page${list.length === 1 ? "" : "s"}, ${fmtSize(bytes.length)}).`);
   } catch (e) {
     console.warn(e);
-    if (e?.code === "declined") setNote("Download cancelled. Your pages are unchanged.");
-    else if (e?.code === "rate_limited") setNote("A download prompt is already open. Answer it, then try again.", true);
-    else if (e?.code) setNote("Downloads are not available in this view. Open the page on claude.ai and try again.", true);
-    else setNote("The PDF could not be built: " + (e?.message || "unknown error"), true);
+    setNote("The PDF could not be built: " + (e?.message || "unknown error"), true);
   }
   $("exGo").disabled = false;
 };

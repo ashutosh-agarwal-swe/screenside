@@ -5,14 +5,14 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Screenside PDF Tools</title>
 <meta name="referrer" content="no-referrer">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-8d9x7fyF5hsX2i3aJog1IlBXhR04d2OiQ3P+Dys1buM=' 'wasm-unsafe-eval' blob:; worker-src blob:; child-src blob:; style-src 'unsafe-inline'; img-src blob: data:; connect-src 'none'; font-src 'none'; media-src 'none'; object-src 'none'; frame-src 'none'; manifest-src 'none'; form-action 'none'; base-uri 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-LYL4YH7CpmFOVUB9Nrr2OdPpo37VqBm3yD/Zb3i3rFE=' 'wasm-unsafe-eval' blob:; worker-src blob:; child-src blob:; style-src 'unsafe-inline'; img-src blob: data:; connect-src 'none'; font-src 'none'; media-src 'none'; object-src 'none'; frame-src 'none'; manifest-src 'none'; form-action 'none'; base-uri 'none'">
 <style>
 /* Layout idea: a light table. One fixed header, then a single view at a time: tool shelf, tool bench, page desk or page editor. */
 :root {
   /* Palette: dark blue, gold, signal red, silver, army green. */
   --desk: #e9ebef; --panel: #ffffff; --ink: #101b3f; --muted: #5a6274; --line: #c7ccd6;
   --accent: #16296b; --accent-ink: #ffffff; --accent-soft: #dfe4f4; --danger: #c8102e; --good: #4b5320; --gold: #c79a1b; --navy: #0f1b45; --paper: #ffffff;
-  --c-org: #16296b; --c-conv: #94700a; --c-edit: #4b5320; --c-sec: #c8102e; --c-ai: #5a6274;
+  --c-org: #16296b; --c-conv: #94700a; --c-edit: #4b5320; --c-sec: #c8102e;
   --sheet-shadow: 0 1px 2px rgba(16,27,63,.18), 0 6px 16px rgba(16,27,63,.10);
   --font-display: "Bricolage Grotesque", "Trebuchet MS", system-ui, sans-serif;
   --font-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
@@ -25,7 +25,7 @@
     color-scheme: dark;
     --desk: #0a1024; --panel: #131b36; --ink: #e9ecf3; --muted: #a9b0c0; --line: #283256;
     --accent: #e0b83c; --accent-ink: #0a1024; --accent-soft: #2a2f4d; --danger: #ff5c72; --good: #a9b56b; --gold: #e0b83c; --navy: #0c1432; --paper: #f4f5f8;
-    --c-org: #8ea2ff; --c-conv: #e0b83c; --c-edit: #a9b56b; --c-sec: #ff5c72; --c-ai: #a9b0c0;
+    --c-org: #8ea2ff; --c-conv: #e0b83c; --c-edit: #a9b56b; --c-sec: #ff5c72;
     --sheet-shadow: 0 1px 2px rgba(0,0,0,.5), 0 8px 20px rgba(0,0,0,.35);
   }
 }
@@ -33,7 +33,7 @@
   color-scheme: dark;
   --desk: #0a1024; --panel: #131b36; --ink: #e9ecf3; --muted: #a9b0c0; --line: #283256;
   --accent: #e0b83c; --accent-ink: #0a1024; --accent-soft: #2a2f4d; --danger: #ff5c72; --good: #a9b56b; --gold: #e0b83c; --navy: #0c1432; --paper: #f4f5f8;
-  --c-org: #8ea2ff; --c-conv: #e0b83c; --c-edit: #a9b56b; --c-sec: #ff5c72; --c-ai: #a9b0c0;
+  --c-org: #8ea2ff; --c-conv: #e0b83c; --c-edit: #a9b56b; --c-sec: #ff5c72;
   --sheet-shadow: 0 1px 2px rgba(0,0,0,.5), 0 8px 20px rgba(0,0,0,.35);
 }
 
@@ -532,18 +532,12 @@ function parseRanges(s, n) {
 
 /* ---------- saving ---------- */
 const toBlob = (data, type) => data instanceof Blob ? data : new Blob([data], { type: type || "application/octet-stream" });
-const downloadsReady = (async () => { try { return window.claude?.use ? await window.claude.use("downloads") : null; } catch { return null; } })();
 async function saveFile(name, data) {
-  const blob = toBlob(data), dl = await downloadsReady;
-  if (dl) { await dl.save({ filename: name, data: blob }); return; }
+  const blob = toBlob(data);
   const a = h("a", { href: URL.createObjectURL(blob), download: name }); document.body.append(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(a.href), 60000);
 }
 function saveErrorText(e) {
-  if (e?.code === "declined") return "Download cancelled.";
-  if (e?.code === "rate_limited") return "A download prompt is already open. Answer it, then try again.";
-  if (e?.code === "too_large") return "This file is too large to save from here.";
-  if (e?.code) return "Downloads are not available in this view. Open the page on claude.ai and try again.";
   return "The file could not be saved: " + (e?.message || "unknown error");
 }
 async function makeZip(files) {
@@ -699,7 +693,7 @@ async function subsetPdf(doc, indices) {
 /* ===== toolview.js ===== */
 /* ---------- tool registry and the generic tool bench ---------- */
 const TOOLS = [], TOOL = {};
-const CATS = { org: ["Organize", "--c-org"], conv: ["Compress and convert", "--c-conv"], edit: ["View and edit", "--c-edit"], sec: ["Sign and protect", "--c-sec"], ai: ["AI", "--c-ai"] };
+const CATS = { org: ["Organize", "--c-org"], conv: ["Compress and convert", "--c-conv"], edit: ["View and edit", "--c-edit"], sec: ["Sign and protect", "--c-sec"] };
 function tool(def) { TOOLS.push(def); TOOL[def.id] = def; return def; }
 const alias = (base, over) => tool({ ...TOOL[base], ...over });
 const MIME = { pdf: "application/pdf", png: "image/png", jpg: "image/jpeg", zip: "application/zip", txt: "text/plain", csv: "text/csv",
@@ -847,9 +841,9 @@ function buildHome() {
       h("input", { class: "search", id: "search", type: "search", placeholder: "Find a tool", "aria-label": "Find a tool", oninput: e => drawHome(e.target.value) })),
     h("div", { class: "shield", html: ic("lock") }, h("div", {}, h("b", {}, PUBLIC_BUILD ? "Your files cannot leave this device" : "Your files stay on this device"),
       h("span", {}, PUBLIC_BUILD ? "This page has no server, no account, no tracking and no storage. Its security policy blocks every outgoing connection, so even a faulty tool could not send a file anywhere. Close the tab and everything is gone."
-        : "The tools run inside this page and upload nothing. The AI tools are the one exception: they send the document's text to Claude when you use them."))),
+        : "The tools run inside this page and upload nothing."))),
     h("div", { id: "homeBody", style: { display: "flex", flexDirection: "column", gap: "26px" } }),
-    h("p", { class: "missing", html: "<b>Not in this build.</b> Converting to PDF/A; HWP files; old binary .doc, .xls and .ppt files; share links, signature requests, accounts and cloud storage. Each needs a server, and a server would mean uploading your files." + (PUBLIC_BUILD ? "" : window.claude?.use ? "" : " The AI tools appear only when this page is opened inside Claude.") }),
+    h("p", { class: "missing", html: "<b>Not in this build.</b> Converting to PDF/A; HWP files; old binary .doc, .xls and .ppt files; share links, signature requests, accounts and cloud storage. Each needs a server, and a server would mean uploading your files." }),
     h("footer", { class: "foot" },
       SITE.kofi && h("div", {}, h("h3", {}, "Support, if you like"), h("p", {}, "Screenside is free and stays free. If it saved you time, you can ", h("a", { href: SITE.kofi, ...ext }, "leave a tip on Ko-fi"), ". This is entirely optional and unlocks nothing.")),
       mail && h("div", {}, h("h3", {}, "Request a feature"), h("p", {}, "Missing a tool, or found a file that breaks one? Email ", h("a", { href: "mailto:" + mail + "?subject=Screenside%20feature%20request" }, mail), ". Please do not attach private documents.")),
@@ -3138,21 +3132,11 @@ $("exGo").onclick = async () => {
   $("exGo").disabled = true; setNote("Building your PDF…");
   try {
     const bytes = await buildPdf(list);
-    const blob = new Blob([bytes], { type: "application/pdf" });
-    setNote(`Ready: ${list.length} page${list.length === 1 ? "" : "s"}, ${fmtSize(bytes.length)}. Confirm the download when asked.`);
-    const dl = await downloadsReady;
-    if (dl) await dl.save({ filename: name, data: blob });
-    else {
-      const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name;
-      document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 60000);
-    }
+    await saveFile(name, new Blob([bytes], { type: "application/pdf" }));
     setNote(`Saved ${name} (${list.length} page${list.length === 1 ? "" : "s"}, ${fmtSize(bytes.length)}).`);
   } catch (e) {
     console.warn(e);
-    if (e?.code === "declined") setNote("Download cancelled. Your pages are unchanged.");
-    else if (e?.code === "rate_limited") setNote("A download prompt is already open. Answer it, then try again.", true);
-    else if (e?.code) setNote("Downloads are not available in this view. Open the page on claude.ai and try again.", true);
-    else setNote("The PDF could not be built: " + (e?.message || "unknown error"), true);
+    setNote("The PDF could not be built: " + (e?.message || "unknown error"), true);
   }
   $("exGo").disabled = false;
 };
@@ -3218,7 +3202,6 @@ App.go = () => {
 };
 addEventListener("hashchange", App.go);
 for (const ev of ["dragover", "drop"]) addEventListener(ev, e => { if ([...(e.dataTransfer?.types || [])].includes("Files")) e.preventDefault(); });
-if (!window.claude?.use) for (const t of TOOLS.filter(x => x.cat === "ai")) { TOOLS.splice(TOOLS.indexOf(t), 1); delete TOOL[t.id]; }
 buildHome(); App.go();
 
 </script>
