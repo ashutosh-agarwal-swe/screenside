@@ -294,7 +294,7 @@ function streamData(s) {
   return PL.decodePDFRawStream(s).decode();
 }
 /* calls add(category, name) for every resource name a content stream uses */
-function resourceNames(b, add) {
+function resourceNames(b, add, budget = { left: 32 * b.length + (1 << 20) }) {
   const n = b.length, WS = c => c === 0 || c === 9 || c === 10 || c === 12 || c === 13 || c === 32;
   const DL = c => c === 40 || c === 41 || c === 60 || c === 62 || c === 91 || c === 93 || c === 123 || c === 125 || c === 47 || c === 37;
   const ASCII = c => WS(c) || (c > 32 && c < 127);
@@ -320,17 +320,21 @@ function resourceNames(b, add) {
       const at = k => { const j = ops.findIndex(v => k.includes(v)); return j < 0 ? undefined : ops[j + 1]; };
       const cs = at(["CS", "ColorSpace"]), len = at(["L", "Length"]);
       if (typeof cs === "string") add("ColorSpace", cs);
-      /* end the data where PDF.js does (an EI followed by 10 plain bytes); a viewer may end it at an earlier EI instead,
-         so also read what follows the first EI as content: an extra name kept is harmless, a missed one loses a drawing */
-      let j = i + 1 + (typeof len === "number" ? len : 0), first = -1;
+      /* end the data where PDF.js does (an EI followed by 10 plain bytes); a viewer may end it at any earlier EI instead,
+         so also read what follows each of those as content: an extra name kept is harmless, a missed one loses a drawing */
+      let j = i + 1 + (typeof len === "number" ? len : 0);
+      const ends = [];
       for (;; j++) {
         if (j + 1 >= n) { j = n; break; }
         if (b[j] === 69 && b[j + 1] === 73 && WS(b[j - 1]) && (j + 2 >= n || WS(b[j + 2]) || DL(b[j + 2]))) {
-          if (first < 0) first = j + 2;
+          ends.push(j + 2);
           if (b.subarray(j + 2, j + 12).every(ASCII)) { j += 2; break; }
         }
       }
-      if (first >= 0 && first < j) try { resourceNames(b.subarray(first, j), add); } catch { }
+      for (const e of ends) if (e < j) {
+        if ((budget.left -= j - e) < 0) throw new Error("content too complex");
+        try { resourceNames(b.subarray(e, j), add, budget); } catch (err) { if (budget.left < 0) throw err; }
+      }
       i = j; ops = []; continue;
     }
     const cat = RES_OPS[tok];
