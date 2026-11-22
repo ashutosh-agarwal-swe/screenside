@@ -108,22 +108,35 @@ async function blocksToPdf(blocks, { size = "a4", land = false, margin = 56, fs 
   newPage();
   const fontOf = st => st.m ? F.m : F[(st.b ? "b" : "") + (st.i ? "i" : "") || "r"];
   const measure = (t, st, sz) => textWidth(fontOf(st), t, sz, st);
-  function wrap(runs, sz, width) {
+  /* how many of the characters ch[i..] fit in width (at least 1): gallop then bisect, so only O(k log k) work for a k-char line */
+  function fitCount(ch, i, r, sz, width) {
+    const n = ch.length - i, wd = k => measure(ch.slice(i, i + k).join(""), r, sz);
+    let lo = 1, hi = 2;
+    while (hi < n && wd(hi) <= width) { lo = hi; hi *= 2; }
+    if (hi >= n) { if (wd(n) <= width) return n; hi = n; }
+    while (hi - lo > 1) { const m = (lo + hi) >> 1; if (wd(m) <= width) lo = m; else hi = m; }
+    return lo;
+  }
+  function wrap(runs, sz, width, maxLines = 20000) {
     const lines = [[]]; let x = 0, space = false; const spw = F.r.widthOfTextAtSize(" ", sz);
     const put = (t, st, w) => { if (space && x > 0) x += spw; lines[lines.length - 1].push({ t, st, x, w }); x += w; space = false; };
-    for (const r of runs) for (const part of cleanText(r.text).split(/(\n| +)/)) {
+    all: for (const r of runs) for (const part of cleanText(r.text).split(/(\n| +)/)) {
+      if (lines.length > maxLines) break all;
       if (!part) continue;
       if (part === "\n") { lines.push([]); x = 0; space = false; continue; }
       if (/^ +$/.test(part)) { space = true; if (r.m && x > 0) { x += spw * (part.length - 1); } continue; }
-      let t = part, w = measure(t, r, sz);
+      const w = measure(part, r, sz);
       if (x > 0 && x + (space ? spw : 0) + w > width) { lines.push([]); x = 0; space = false; }
-      while (w > width && t.length > 1) {
-        let k = t.length - 1; while (k > 1 && measure(t.slice(0, k), r, sz) > width) k--;
-        put(t.slice(0, k), r, measure(t.slice(0, k), r, sz)); lines.push([]); x = 0; t = t.slice(k); w = measure(t, r, sz);
+      if (w <= width) { put(part, r, w); continue; }
+      const ch = Array.from(part);
+      for (let i = 0; i < ch.length;) {
+        if (lines.length > maxLines) break all;
+        const k = fitCount(ch, i, r, sz, width), t = ch.slice(i, i + k).join("");
+        put(t, r, measure(t, r, sz)); i += k;
+        if (i < ch.length) { lines.push([]); x = 0; }
       }
-      put(t, r, w);
     }
-    return lines;
+    return lines.slice(0, maxLines);
   }
   async function drawLine(segs, x0, yb, sz, width) {
     if (segs.some(s => RTL_RE.test(s.t))) {   /* right-to-left line: let the browser order and shape the whole line, then set it flush right */
@@ -159,8 +172,8 @@ async function blocksToPdf(blocks, { size = "a4", land = false, margin = 56, fs 
     const tw = widths.reduce((a, b) => a + b, 0), line = (x1, y1, x2, y2) => page.drawLine({ start: { x: x1, y: y1 }, end: { x: x2, y: y2 }, thickness: 0.4, color: rgb(.6, .62, .68) });
     y -= 4; let top = true;
     for (const [ri, r] of rows.entries()) {
-      const cells = Array.from({ length: ncol }, (_, i) => wrap([{ text: String(r[i] ?? ""), b: ri === 0 }], sz, widths[i] - 2 * pad));
       const maxLines = Math.floor((PH - 2 * margin - 2 * pad) / lh);
+      const cells = Array.from({ length: ncol }, (_, i) => wrap([{ text: String(r[i] ?? ""), b: ri === 0 }], sz, widths[i] - 2 * pad, maxLines));
       const nl = Math.min(maxLines, Math.max(1, ...cells.map(c => c.length))), rh = nl * lh + 2 * pad;
       if (y - rh < margin) { newPage(); top = true; }
       if (top) { line(margin, y, margin + tw, y); top = false; }
