@@ -299,14 +299,15 @@ function resourceNames(b, add) {
   const DL = c => c === 40 || c === 41 || c === 60 || c === 62 || c === 91 || c === 93 || c === 123 || c === 125 || c === 47 || c === 37;
   const ASCII = c => WS(c) || (c > 32 && c < 127);
   const strEnd = (k, max = n) => { for (let d = 0, end = Math.min(n, k + max); k < end; k++) { if (b[k] === 92) k++; else if (b[k] === 40) d++; else if (b[k] === 41 && --d === 0) return k + 1; } return -1; };
-  /* an EI that ends inline image data is followed by plain content, where only complete, short literal strings may hold other bytes;
+  /* an EI that ends inline image data is followed by plain content, where only complete literal strings may hold other bytes;
      the bytes looked at past candidate EIs are capped in total so crafted data cannot make the scan quadratic */
   let budget = 16 * n + (1 << 20);
   const textAfter = k => {
     for (let left = 10; k < n && left > 0; left--) {
       if (b[k] === 40) {
-        const e = strEnd(k, 1024);
-        if ((budget -= e < 0 ? 1024 : e - k) < 0) throw new Error("inline image data too complex");
+        const e = strEnd(k, budget);
+        if (e < 0 && n - k > budget) throw new Error("inline image data too complex");
+        budget -= (e < 0 ? n : e) - k;
         if (e < 0) return false; k = e; continue;
       }
       if (!ASCII(b[k])) return false; k++;

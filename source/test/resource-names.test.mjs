@@ -16,6 +16,11 @@ test("finds names around an inline image", () => {
     ["XObject:Im1", "ColorSpace:CS0", "Font:F1", "ExtGState:GS1"]);
 });
 
+test("a long string after the real EI does not make the reader skip to a later EI", () => {
+  assert.deepEqual(names(`/Im1 Do BI /L 1 ID x EI (${"a".repeat(5000)}) Tj /F1 9 Tf BI /L 1 ID y EI /GS1 gs`), ["XObject:Im1", "Font:F1", "ExtGState:GS1"]);
+  assert.deepEqual(names(`BI ID \xff\nEI (${"a".repeat(5000)}) Tj /F1 9 Tf BI ID y EI`), ["Font:F1"]);
+});
+
 test("a negative inline image length cannot move the reader backwards", () => {
   timed(" EI BI /L -16 ID x EI ", 50);
   timed("% EI\n/Im1 Do BI /L -100000 ID x EI /F1 9 Tf", 50);
