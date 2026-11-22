@@ -53,9 +53,9 @@ tool({ id: "extract-images", name: "Extract Images", cat: "conv", icon: "copy",
       else if (filters[0] === "FlateDecode" && !d.has(N("DecodeParms")) && !d.has(N("Decode"))) {
         const cs = d.lookup(N("ColorSpace")), bpc = d.lookupMaybe(N("BitsPerComponent"), PDFNumber)?.asNumber();
         const comps = cs instanceof PDFName ? ({ DeviceRGB: 3, DeviceGray: 1 }[cs.decodeText()] || 0) : 0;
-        if (!comps || bpc !== 8) { skipped++; continue; }
+        if (!comps || bpc !== 8 || W * H > MAX_IMAGE_PX) { skipped++; continue; }
         try {
-          const raw = await inflateBytes(data); if (raw.length < W * H * comps) { skipped++; continue; }
+          const raw = await inflateBytes(data, W * H * comps); if (raw.length < W * H * comps) { skipped++; continue; }
           const px = new Uint8ClampedArray(W * H * 4);
           for (let i = 0, j = 0; i < W * H; i++, j += 4) { if (comps === 3) { px[j] = raw[i * 3]; px[j + 1] = raw[i * 3 + 1]; px[j + 2] = raw[i * 3 + 2]; } else px[j] = px[j + 1] = px[j + 2] = raw[i]; px[j + 3] = 255; }
           const cv = document.createElement("canvas"); cv.width = W; cv.height = H;

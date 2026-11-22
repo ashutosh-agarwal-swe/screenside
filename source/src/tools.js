@@ -51,7 +51,16 @@ tool({ id: "extract-pages", name: "Extract PDF Pages", cat: "org", icon: "copy",
   } });
 
 /* Compress */
-async function inflateBytes(b) { return new Uint8Array(await new Response(new Blob([b]).stream().pipeThrough(new DecompressionStream("deflate"))).arrayBuffer()); }
+const MAX_IMAGE_PX = 24e6;
+/* Inflates at most `limit` bytes, then cancels the stream, so a deflate bomb cannot fill memory. */
+async function inflateBytes(b, limit) {
+  const rd = new Blob([b]).stream().pipeThrough(new DecompressionStream("deflate")).getReader(), parts = []; let n = 0;
+  while (n < limit) { const { done, value } = await rd.read(); if (done) break; parts.push(value); n += value.length; }
+  if (n >= limit) rd.cancel().catch(() => {});
+  const out = new Uint8Array(Math.min(n, limit)); let o = 0;
+  for (const p of parts) { if (o >= out.length) break; const t = Math.min(p.length, out.length - o); out.set(p.subarray(0, t), o); o += t; }
+  return out;
+}
 function a85decode(b) {
   const out = []; let t = 0, n = 0;
   for (let i = 0; i < b.length; i++) {
@@ -70,7 +79,7 @@ async function recompressImages(doc, { quality, maxSide, progress }) {
     if (!(obj instanceof PDFRawStream)) continue;
     const d = obj.dict; if (nameOf(d.get(N("Subtype"))) !== "Image") continue;
     const W = d.lookupMaybe(N("Width"), PDFNumber)?.asNumber(), H = d.lookupMaybe(N("Height"), PDFNumber)?.asNumber();
-    if (!W || !H || W * H < 40000 || obj.contents.length < 12000) continue;
+    if (!W || !H || W * H < 40000 || W * H > MAX_IMAGE_PX || obj.contents.length < 12000) continue;
     if (d.has(N("Mask")) || d.has(N("Decode")) || d.has(N("ImageMask")) || d.lookupMaybe(N("BitsPerComponent"), PDFNumber)?.asNumber() !== 8) continue;
     const fv = d.lookup(N("Filter")); let filters = fv instanceof PDFName ? [fv.decodeText()] : fv instanceof PDFArray ? fv.asArray().map(x => x instanceof PDFName ? x.decodeText() : "?") : [], data = obj.contents;
     if (filters[0] === "ASCII85Decode") { data = a85decode(data); filters = filters.slice(1); }
@@ -84,7 +93,7 @@ async function recompressImages(doc, { quality, maxSide, progress }) {
     try {
       if (filter === "DCTDecode") c.drawImage(await createImageBitmap(new Blob([data], { type: "image/jpeg" })), 0, 0, nw, nh);
       else if (filter === "FlateDecode" && !d.has(N("DecodeParms"))) {
-        const raw = await inflateBytes(data); if (raw.length < W * H * comps) continue;
+        const raw = await inflateBytes(data, W * H * comps); if (raw.length < W * H * comps) continue;
         const px = new Uint8ClampedArray(W * H * 4);
         for (let i = 0, j = 0; i < W * H; i++, j += 4) { if (comps === 3) { px[j] = raw[i * 3]; px[j + 1] = raw[i * 3 + 1]; px[j + 2] = raw[i * 3 + 2]; } else px[j] = px[j + 1] = px[j + 2] = raw[i]; px[j + 3] = 255; }
         const src = document.createElement("canvas"); src.width = W; src.height = H; src.getContext("2d").putImageData(new ImageData(px, W, H), 0, 0);
