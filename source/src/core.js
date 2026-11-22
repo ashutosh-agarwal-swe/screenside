@@ -299,8 +299,8 @@ function resourceNames(b, add) {
   const DL = c => c === 40 || c === 41 || c === 60 || c === 62 || c === 91 || c === 93 || c === 123 || c === 125 || c === 47 || c === 37;
   const ASCII = c => WS(c) || (c > 32 && c < 127);
   const strEnd = k => { for (let d = 0; k < n; k++) { if (b[k] === 92) k++; else if (b[k] === 40) d++; else if (b[k] === 41 && --d === 0) return k + 1; } return -1; };
-  /* an EI that ends inline image data is followed by plain content, where only complete literal strings may hold other bytes */
-  const textAfter = k => { for (let left = 10; k < n && left > 0; left--) { if (b[k] === 40) { if ((k = strEnd(k)) < 0) return false; continue; } if (!ASCII(b[k])) return false; k++; } return true; };
+  /* an EI that ends inline image data is followed by plain content, where only complete literal strings and comments may hold other bytes */
+  const textAfter = k => { for (let left = 10; k < n && left > 0; left--) { if (b[k] === 40) { if ((k = strEnd(k)) < 0) return false; continue; } if (b[k] === 37) { while (k < n && b[k] !== 10 && b[k] !== 13) k++; continue; } if (!ASCII(b[k])) return false; k++; } return true; };
   let i = 0, ops = [];
   while (i < n) {
     const c = b[i];
