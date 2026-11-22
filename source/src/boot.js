@@ -10,5 +10,4 @@ App.go = () => {
 };
 addEventListener("hashchange", App.go);
 for (const ev of ["dragover", "drop"]) addEventListener(ev, e => { if ([...(e.dataTransfer?.types || [])].includes("Files")) e.preventDefault(); });
-if (!window.claude?.use) for (const t of TOOLS.filter(x => x.cat === "ai")) { TOOLS.splice(TOOLS.indexOf(t), 1); delete TOOL[t.id]; }
 buildHome(); App.go();

@@ -125,18 +125,12 @@ function parseRanges(s, n) {
 
 /* ---------- saving ---------- */
 const toBlob = (data, type) => data instanceof Blob ? data : new Blob([data], { type: type || "application/octet-stream" });
-const downloadsReady = (async () => { try { return window.claude?.use ? await window.claude.use("downloads") : null; } catch { return null; } })();
 async function saveFile(name, data) {
-  const blob = toBlob(data), dl = await downloadsReady;
-  if (dl) { await dl.save({ filename: name, data: blob }); return; }
+  const blob = toBlob(data);
   const a = h("a", { href: URL.createObjectURL(blob), download: name }); document.body.append(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(a.href), 60000);
 }
 function saveErrorText(e) {
-  if (e?.code === "declined") return "Download cancelled.";
-  if (e?.code === "rate_limited") return "A download prompt is already open. Answer it, then try again.";
-  if (e?.code === "too_large") return "This file is too large to save from here.";
-  if (e?.code) return "Downloads are not available in this view. Open the page on claude.ai and try again.";
   return "The file could not be saved: " + (e?.message || "unknown error");
 }
 async function makeZip(files) {

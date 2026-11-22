@@ -1,6 +1,6 @@
 /* ---------- tool registry and the generic tool bench ---------- */
 const TOOLS = [], TOOL = {};
-const CATS = { org: ["Organize", "--c-org"], conv: ["Compress and convert", "--c-conv"], edit: ["View and edit", "--c-edit"], sec: ["Sign and protect", "--c-sec"], ai: ["AI", "--c-ai"] };
+const CATS = { org: ["Organize", "--c-org"], conv: ["Compress and convert", "--c-conv"], edit: ["View and edit", "--c-edit"], sec: ["Sign and protect", "--c-sec"] };
 function tool(def) { TOOLS.push(def); TOOL[def.id] = def; return def; }
 const alias = (base, over) => tool({ ...TOOL[base], ...over });
 const MIME = { pdf: "application/pdf", png: "image/png", jpg: "image/jpeg", zip: "application/zip", txt: "text/plain", csv: "text/csv",
@@ -148,9 +148,9 @@ function buildHome() {
       h("input", { class: "search", id: "search", type: "search", placeholder: "Find a tool", "aria-label": "Find a tool", oninput: e => drawHome(e.target.value) })),
     h("div", { class: "shield", html: ic("lock") }, h("div", {}, h("b", {}, PUBLIC_BUILD ? "Your files cannot leave this device" : "Your files stay on this device"),
       h("span", {}, PUBLIC_BUILD ? "This page has no server, no account, no tracking and no storage. Its security policy blocks every outgoing connection, so even a faulty tool could not send a file anywhere. Close the tab and everything is gone."
-        : "The tools run inside this page and upload nothing. The AI tools are the one exception: they send the document's text to Claude when you use them."))),
+        : "The tools run inside this page and upload nothing."))),
     h("div", { id: "homeBody", style: { display: "flex", flexDirection: "column", gap: "26px" } }),
-    h("p", { class: "missing", html: "<b>Not in this build.</b> Converting to PDF/A; HWP files; old binary .doc, .xls and .ppt files; share links, signature requests, accounts and cloud storage. Each needs a server, and a server would mean uploading your files." + (PUBLIC_BUILD ? "" : window.claude?.use ? "" : " The AI tools appear only when this page is opened inside Claude.") }),
+    h("p", { class: "missing", html: "<b>Not in this build.</b> Converting to PDF/A; HWP files; old binary .doc, .xls and .ppt files; share links, signature requests, accounts and cloud storage. Each needs a server, and a server would mean uploading your files." }),
     h("footer", { class: "foot" },
       SITE.kofi && h("div", {}, h("h3", {}, "Support, if you like"), h("p", {}, "Screenside is free and stays free. If it saved you time, you can ", h("a", { href: SITE.kofi, ...ext }, "leave a tip on Ko-fi"), ". This is entirely optional and unlocks nothing.")),
       mail && h("div", {}, h("h3", {}, "Request a feature"), h("p", {}, "Missing a tool, or found a file that breaks one? Email ", h("a", { href: "mailto:" + mail + "?subject=Screenside%20feature%20request" }, mail), ". Please do not attach private documents.")),
