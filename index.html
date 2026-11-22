@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Screenside PDF Tools</title>
 <meta name="referrer" content="no-referrer">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-gYm3jgra3+DrGDAsSM5IrCXZ6ozxvu5xKezgu+sxVV4=' 'wasm-unsafe-eval' blob:; worker-src blob:; child-src blob:; style-src 'unsafe-inline'; img-src blob: data:; connect-src 'none'; font-src 'none'; media-src 'none'; object-src 'none'; frame-src 'none'; manifest-src 'none'; form-action 'none'; base-uri 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-wfpemD9lUX3lrjMPY6zPzH8uAD36txpPYdG17U6lKf0=' 'wasm-unsafe-eval' blob:; worker-src blob:; child-src blob:; style-src 'unsafe-inline'; img-src blob: data:; connect-src 'none'; font-src 'none'; media-src 'none'; object-src 'none'; frame-src 'none'; manifest-src 'none'; form-action 'none'; base-uri 'none'">
 <style>
 /* Layout idea: a light table. One fixed header, then a single view at a time: tool shelf, tool bench, page desk or page editor. */
 :root {
@@ -729,7 +729,7 @@ function resourceNames(b, add, budget = { left: 32 * b.length + (1 << 20) }) {
       if (typeof cs === "string") add("ColorSpace", cs);
       /* end the data where PDF.js does (an EI followed by 10 plain bytes); a viewer may end it at any earlier EI instead,
          so also read what follows each of those as content: an extra name kept is harmless, a missed one loses a drawing */
-      let j = i + 1 + (typeof len === "number" ? len : 0);
+      let j = i + 1 + (Number.isInteger(len) && len >= 0 ? len : 0);
       const ends = [];
       for (;; j++) {
         if (j + 1 >= n) { j = n; break; }
@@ -742,6 +742,7 @@ function resourceNames(b, add, budget = { left: 32 * b.length + (1 << 20) }) {
         if ((budget.left -= j - e) < 0) throw new Error("content too complex");
         try { resourceNames(b.subarray(e, j), add, budget); } catch (err) { if (budget.left < 0) throw err; }
       }
+      if (!(j > i)) throw new Error("inline image did not advance");
       i = j; ops = []; continue;
     }
     const cat = RES_OPS[tok];

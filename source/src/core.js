@@ -322,7 +322,7 @@ function resourceNames(b, add, budget = { left: 32 * b.length + (1 << 20) }) {
       if (typeof cs === "string") add("ColorSpace", cs);
       /* end the data where PDF.js does (an EI followed by 10 plain bytes); a viewer may end it at any earlier EI instead,
          so also read what follows each of those as content: an extra name kept is harmless, a missed one loses a drawing */
-      let j = i + 1 + (typeof len === "number" ? len : 0);
+      let j = i + 1 + (Number.isInteger(len) && len >= 0 ? len : 0);
       const ends = [];
       for (;; j++) {
         if (j + 1 >= n) { j = n; break; }
@@ -335,6 +335,7 @@ function resourceNames(b, add, budget = { left: 32 * b.length + (1 << 20) }) {
         if ((budget.left -= j - e) < 0) throw new Error("content too complex");
         try { resourceNames(b.subarray(e, j), add, budget); } catch (err) { if (budget.left < 0) throw err; }
       }
+      if (!(j > i)) throw new Error("inline image did not advance");
       i = j; ops = []; continue;
     }
     const cat = RES_OPS[tok];
