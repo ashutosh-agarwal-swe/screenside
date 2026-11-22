@@ -331,15 +331,6 @@
     };
     for (const [, o] of out.context.enumerateIndirectObjects()) walk(o);
   }
-  /* Last check: the only page objects in the file must be the ones the output is made of. */
-  function onlyOwnPages(out) {
-    const own = new Set(out.getPages().map(p => p.ref.tag)), T = PDFName.of("Type"), root = out.catalog.get(PDFName.of("Pages"));
-    for (const [ref, o] of out.context.enumerateIndirectObjects()) {
-      const t = o instanceof PDFDict ? o.lookup(T) : null;
-      if ((t === PDFName.of("Page") && !own.has(ref.tag)) || (t === PDFName.of("Pages") && ref !== root) || (t === PDFName.of("Catalog") && o !== out.catalog)) return false;
-    }
-    return true;
-  }
   async function buildRedacted(marked, all) {
     const src = await loadDoc(ED.entry.bytes), out = await PDFDocument.create(), tag = "ScreensidePage" + Math.random().toString(36).slice(2) + "_";
     const keep = all ? [] : ED.pages.map((_, i) => i).filter(i => !marked.has(i));
@@ -353,7 +344,7 @@
       const img = await out.embedJpg(await canvasBytes(cv, "image/jpeg", 0.9)); out.addPage([P.w, P.h]).drawImage(img, { x: 0, y: 0, width: P.w, height: P.h });
     }
     relinkPages(out, tag, keep);
-    return onlyOwnPages(out) ? out : null;
+    return await trimToPages(out) ? out : null;
   }
   async function exportRedact() {
     const marked = new Set(ED.objs.filter(o => o.type === "redact").map(o => o.page)), n = marked.size;

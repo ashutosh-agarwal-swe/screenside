@@ -233,9 +233,9 @@ async function rasterize(js, { dpi = 150, quality = 0.8, progress, paint } = {})
    Point kept pages at their new copies and everything else page-shaped at null, then check nothing slipped in.
    A kept widget's /Parent also leads into the form-field tree, whose /Kids list fields on removed pages too: copy
    those fields with only the kids that lead to a widget on a kept page, and drop the value of a field that loses kids. */
-async function subsetPdf(doc, indices) {
+async function copyPagesClean(out, doc, indices) {
   await doc.flush();
-  const out = await PDFDocument.create(), ctx = out.context, N = s => PDFName.of(s), pages = doc.getPages();
+  const ctx = out.context, N = s => PDFName.of(s), pages = doc.getPages();
   const typeOf = o => { const t = o instanceof PDFDict && o.lookup(N("Type")); return t instanceof PDFName ? t.decodeText() : null; };
   const kept = new Map(indices.map(i => [pages[i].ref, null])), gone = new Set([doc.context.trailerInfo.Root]);
   for (const p of pages) {
@@ -269,16 +269,161 @@ async function subsetPdf(doc, indices) {
     const act = d.lookup(N("A")), dest = d.lookup(N("Dest")) ?? (act instanceof PDFDict ? act.lookup(N("D")) : undefined);
     return dest instanceof PDFArray && dest.get(0) === nil;
   };
+  const copies = [];
   for (const i of indices) {
     const src = pages[i], node = copier.copy(src.node);
     let ref = kept.get(src.ref); if (ctx.lookup(ref)) ref = ctx.nextRef();
     const annots = node.lookup(N("Annots"));
     if (annots instanceof PDFArray) { const live = annots.asArray().filter(a => !dead(a)); live.length ? node.set(N("Annots"), ctx.obj(live)) : node.delete(N("Annots")); }
-    ctx.assign(ref, node); out.addPage(PL.PDFPage.of(node, ref, out));
+    ctx.assign(ref, node); copies.push(PL.PDFPage.of(node, ref, out));
   }
-  const ok = new Set([ctx.trailerInfo.Root, ...out.getPages().map(p => p.ref)]);
-  for (const p of out.getPages()) for (let n = p.node, r; (r = n.get(N("Parent"))) instanceof PDFRef && !ok.has(r); n = ctx.lookup(r)) ok.add(r);
-  for (const [ref, o] of ctx.enumerateIndirectObjects())
-    if (["Page", "Pages", "Catalog"].includes(typeOf(o)) && !ok.has(ref)) throw new Error("Could not separate the chosen pages from the rest of this PDF.");
+  return copies;
+}
+async function subsetPdf(doc, indices) {
+  const out = await PDFDocument.create();
+  for (const p of await copyPagesClean(out, doc, indices)) out.addPage(p);
+  if (!await trimToPages(out)) throw new Error("Could not separate the chosen pages from the rest of this PDF.");
   return await out.save();
+}
+/* Which resource each content-stream operator draws, by the /Resources category its name is looked up in. */
+const RES_OPS = { Do: "XObject", Tf: "Font", gs: "ExtGState", sh: "Shading", cs: "ColorSpace", CS: "ColorSpace", scn: "Pattern", SCN: "Pattern", BDC: "Properties", DP: "Properties" };
+function streamData(s) {
+  if (!(s instanceof PDFRawStream)) return s.getUnencodedContents ? s.getUnencodedContents() : s.getContents();
+  const parms = s.dict.lookup(PDFName.of("DecodeParms")), list = parms instanceof PDFArray ? parms.asArray().map(x => s.dict.context.lookup(x)) : [parms];
+  for (const d of list) { const pr = d instanceof PDFDict && d.lookup(PDFName.of("Predictor")); if (pr instanceof PDFNumber && pr.asNumber() > 1) throw new Error("predictor"); }
+  return PL.decodePDFRawStream(s).decode();
+}
+/* calls add(category, name) for every resource name a content stream uses */
+function resourceNames(b, add) {
+  const n = b.length, WS = c => c === 0 || c === 9 || c === 10 || c === 12 || c === 13 || c === 32;
+  const DL = c => c === 40 || c === 41 || c === 60 || c === 62 || c === 91 || c === 93 || c === 123 || c === 125 || c === 47 || c === 37;
+  const ASCII = c => WS(c) || (c > 32 && c < 127);
+  const strEnd = k => { for (let d = 0; k < n; k++) { if (b[k] === 92) k++; else if (b[k] === 40) d++; else if (b[k] === 41 && --d === 0) return k + 1; } return -1; };
+  /* an EI that ends inline image data is followed by plain content, where only complete literal strings may hold other bytes */
+  const textAfter = k => { for (let left = 10; k < n && left > 0; left--) { if (b[k] === 40) { if ((k = strEnd(k)) < 0) return false; continue; } if (!ASCII(b[k])) return false; k++; } return true; };
+  let i = 0, ops = [];
+  while (i < n) {
+    const c = b[i];
+    if (WS(c)) { i++; continue; }
+    if (c === 37) { while (i < n && b[i] !== 10 && b[i] !== 13) i++; continue; }
+    if (c === 40) { if ((i = strEnd(i)) < 0) throw new Error("unterminated string"); ops.push(null); continue; }
+    if ((c === 60 || c === 62) && b[i + 1] === c) { i += 2; ops.push(null); continue; }
+    if (c === 60) { while (i < n && b[i] !== 62) i++; i++; ops.push(null); continue; }
+    if (c === 47) {
+      let nm = "";
+      for (i++; i < n && !WS(b[i]) && !DL(b[i]); i++) nm += b[i] === 35 && i + 2 < n ? String.fromCharCode(parseInt(String.fromCharCode(b[++i], b[++i]), 16)) : String.fromCharCode(b[i]);
+      ops.push(nm); continue;
+    }
+    if (DL(c)) { i++; ops.push(null); continue; }
+    let tok = ""; for (; i < n && !WS(b[i]) && !DL(b[i]); i++) tok += String.fromCharCode(b[i]);
+    if (/^[+-]?(\d+\.?\d*|\.\d+)$/.test(tok)) { ops.push(Number(tok)); continue; }
+    if (tok === "true" || tok === "false" || tok === "null") { ops.push(null); continue; }
+    if (tok === "ID") {
+      const at = k => { const j = ops.findIndex(v => k.includes(v)); return j < 0 ? undefined : ops[j + 1]; };
+      const cs = at(["CS", "ColorSpace"]), len = at(["L", "Length"]);
+      if (typeof cs === "string") add("ColorSpace", cs);
+      let j = i + 1 + (typeof len === "number" ? len : 0), first = -1;
+      for (;; j++) {
+        if (j + 1 >= n) { j = first < 0 ? n : first; break; }
+        if (b[j] === 69 && b[j + 1] === 73 && WS(b[j - 1]) && (j + 2 >= n || WS(b[j + 2]) || DL(b[j + 2]))) {
+          if (first < 0) first = j + 2;
+          if (textAfter(j + 2)) { j += 2; break; }
+        }
+      }
+      i = j; ops = []; continue;
+    }
+    const cat = RES_OPS[tok];
+    if (cat) { const nm = tok === "Tf" ? ops[0] : tok === "BDC" || tok === "DP" ? (ops.length === 2 ? ops[1] : null) : ops[ops.length - 1]; if (typeof nm === "string") add(cat, nm); }
+    ops = [];
+  }
+}
+/* Copied pages keep the whole /Resources they had in the source, and a source often shares one dictionary across pages (inherited from the
+   page tree, or one object every page points at), so images and forms that only removed or redacted pages draw would ride along unseen.
+   Give every page its own Resources holding only what its content, its annotations' appearances and the forms, patterns, soft masks and
+   Type 3 glyphs they draw actually name, drop every object nothing points at any more, then check that no page-tree object other than the
+   output's own and no image or form other than the ones drawn is left. Returns false when the file cannot be trimmed safely. */
+async function trimToPages(out) {
+  await out.flush();
+  const ctx = out.context, N = PDFName.of, look = v => ctx.lookup(v), used = new Set(), own = new Set(), stack = new Set();
+  const isStream = o => o instanceof PL.PDFStream;
+  const build = (res, names) => {
+    const d = ctx.obj({}), ps = res instanceof PDFDict && res.get(N("ProcSet")); if (ps) d.set(N("ProcSet"), ps);
+    const cs = res instanceof PDFDict && res.lookup(N("ColorSpace"));
+    if (cs instanceof PDFDict) for (const k of ["DefaultGray", "DefaultRGB", "DefaultCMYK"]) if (cs.get(N(k))) { if (!names.has("ColorSpace")) names.set("ColorSpace", new Set()); names.get("ColorSpace").add(k); }
+    for (const [cat, set] of names) {
+      const src = res instanceof PDFDict && res.lookup(N(cat)); if (!(src instanceof PDFDict)) continue;
+      const c = ctx.obj({}); for (const k of set) { const v = src.get(N(k)); if (v) c.set(N(k), v); }
+      if (c.keys().length) d.set(N(cat), c);
+    }
+    return d;
+  };
+  const sub = (o, res, names) => {
+    if (!isStream(o)) return;
+    const r = o.dict.lookup(N("Resources"));
+    if (!(r instanceof PDFDict)) return collect([o], res, names);
+    if (own.has(o)) return; own.add(o);
+    const m = new Map(); collect([o], r, m); o.dict.set(N("Resources"), build(r, m));
+  };
+  const follow = (cat, o, res, names) => {
+    if (cat === "XObject" && isStream(o)) {
+      used.add(o);
+      if (o.dict.lookup(N("Subtype")) === N("Form")) return sub(o, res, names);
+      for (const k of ["SMask", "Mask"]) { const m = o.dict.lookup(N(k)); if (isStream(m)) used.add(m); }
+      const alt = o.dict.lookup(N("Alternates"));
+      if (alt instanceof PDFArray) for (const a of alt.asArray()) { const im = look(a)?.lookup?.(N("Image")); if (isStream(im)) used.add(im); }
+    } else if (cat === "Pattern") sub(o, res, names);
+    else if (cat === "ExtGState" && o instanceof PDFDict) { const sm = o.lookup(N("SMask")), g = sm instanceof PDFDict && sm.lookup(N("G")); if (isStream(g)) { used.add(g); sub(g, res, names); } }
+    else if (cat === "Font" && o instanceof PDFDict && o.lookup(N("Subtype")) === N("Type3")) {
+      const cp = o.lookup(N("CharProcs")), glyphs = cp instanceof PDFDict ? cp.values().map(look) : [], r = o.lookup(N("Resources"));
+      if (!(r instanceof PDFDict)) collect(glyphs, res, names);
+      else if (!own.has(o)) { own.add(o); const m = new Map(); collect(glyphs, r, m); o.set(N("Resources"), build(r, m)); }
+    }
+  };
+  /* a page's content array is one stream split anywhere, even between an operand and its operator, so read the parts as one */
+  const collect = (streams, res, names) => {
+    const fresh = streams.filter(s => isStream(s) && !stack.has(s)); if (!fresh.length) return;
+    fresh.forEach(s => stack.add(s));
+    const parts = fresh.map(streamData), all = new Uint8Array(parts.reduce((t, p) => t + p.length + 1, 0));
+    let at = 0; for (const p of parts) { all.set(p, at); all[at + p.length] = 10; at += p.length + 1; }
+    resourceNames(all, (cat, nm) => {
+      if (!names.has(cat)) names.set(cat, new Set());
+      const set = names.get(cat); if (set.has(nm)) return; set.add(nm);
+      const dict = res instanceof PDFDict && res.lookup(N(cat));
+      if (dict instanceof PDFDict) follow(cat, look(dict.get(N(nm))), res, names);
+    });
+    fresh.forEach(s => stack.delete(s));
+  };
+  try {
+    for (const p of out.getPages()) {
+      const node = p.node, res = node.lookup(N("Resources")), names = new Map(), c = look(node.get(N("Contents")));
+      node.delete(N("Thumb"));
+      collect(c instanceof PDFArray ? c.asArray().map(look) : [c], res, names);
+      const annots = node.lookup(N("Annots"));
+      for (const a of annots instanceof PDFArray ? annots.asArray().map(look) : []) {
+        if (!(a instanceof PDFDict)) continue;
+        const ap = a.lookup(N("AP")), mk = a.lookup(N("MK")), forms = [];
+        if (ap instanceof PDFDict) for (const v of ap.values().map(look)) v instanceof PDFDict ? forms.push(...v.values().map(look)) : forms.push(v);
+        if (mk instanceof PDFDict) for (const k of ["I", "RI", "IX"]) forms.push(mk.lookup(N(k)));
+        for (const f of forms) if (isStream(f)) { used.add(f); sub(f, res, names); }
+      }
+      node.set(N("Resources"), build(res, names));
+    }
+  } catch (e) { console.warn(e); return false; }
+  const reach = new Set(), todo = [ctx.trailerInfo.Root, ctx.trailerInfo.Info, ctx.trailerInfo.Encrypt];
+  while (todo.length) {
+    let o = todo.pop();
+    if (o instanceof PDFRef) { if (reach.has(o)) continue; reach.add(o); o = look(o); }
+    if (isStream(o)) o = o.dict;
+    if (o instanceof PDFDict) for (const v of o.values()) todo.push(v);
+    else if (o instanceof PDFArray) for (const v of o.asArray()) todo.push(v);
+  }
+  for (const [ref] of ctx.enumerateIndirectObjects()) if (!reach.has(ref)) ctx.delete(ref);
+  const ok = new Set([ctx.trailerInfo.Root, ...out.getPages().map(p => p.ref)]);
+  for (const p of out.getPages()) for (let n = p.node, r; (r = n.get(N("Parent"))) instanceof PDFRef && !ok.has(r); n = look(r)) ok.add(r);
+  for (const [ref, o] of ctx.enumerateIndirectObjects()) {
+    const t = o instanceof PDFDict ? o.lookup(N("Type")) : null, st = isStream(o) ? o.dict.lookup(N("Subtype")) : null;
+    if ((t === N("Page") || t === N("Pages") || t === N("Catalog")) && !ok.has(ref)) return false;
+    if ((st === N("Image") || st === N("Form")) && !used.has(o)) return false;
+  }
+  return true;
 }

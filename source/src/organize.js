@@ -468,7 +468,7 @@ async function buildPdf(list) {
   list.forEach((p, i) => { if (p.kind === "pdf") { if (!bySrc.has(p.src)) bySrc.set(p.src, []); bySrc.get(p.src).push(i); } });
   const copied = new Array(list.length);
   for (const [sid, idxs] of bySrc) {
-    const cp = await out.copyPages(sources.get(sid).doc, idxs.map(i => list[i].index));
+    const cp = await copyPagesClean(out, sources.get(sid).doc, idxs.map(i => list[i].index));
     idxs.forEach((i, k) => copied[i] = cp[k]);
   }
   list.forEach((p, i) => {
@@ -478,6 +478,7 @@ async function buildPdf(list) {
     out.addPage(pg);
   });
   out.setProducer("Screenside"); out.setModificationDate(new Date());
+  if (!await trimToPages(out)) throw new Error("Could not separate the chosen pages from the rest of the original files.");
   return await out.save();
 }
 function openExport() {
