@@ -347,6 +347,8 @@ async function trimToPages(out) {
   const isStream = o => o instanceof PL.PDFStream;
   const build = (res, names) => {
     const d = ctx.obj({}), ps = res instanceof PDFDict && res.get(N("ProcSet")); if (ps) d.set(N("ProcSet"), ps);
+    const cs = res instanceof PDFDict && res.lookup(N("ColorSpace"));
+    if (cs instanceof PDFDict) for (const k of ["DefaultGray", "DefaultRGB", "DefaultCMYK"]) if (cs.get(N(k))) { if (!names.has("ColorSpace")) names.set("ColorSpace", new Set()); names.get("ColorSpace").add(k); }
     for (const [cat, set] of names) {
       const src = res instanceof PDFDict && res.lookup(N(cat)); if (!(src instanceof PDFDict)) continue;
       const c = ctx.obj({}); for (const k of set) { const v = src.get(N(k)); if (v) c.set(N(k), v); }
