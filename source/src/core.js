@@ -298,14 +298,15 @@ function resourceNames(b, add) {
   const n = b.length, WS = c => c === 0 || c === 9 || c === 10 || c === 12 || c === 13 || c === 32;
   const DL = c => c === 40 || c === 41 || c === 60 || c === 62 || c === 91 || c === 93 || c === 123 || c === 125 || c === 47 || c === 37;
   const ASCII = c => WS(c) || (c > 32 && c < 127);
-  /* an EI that ends inline image data is followed by plain content, where only strings may hold other bytes */
-  const textAfter = k => { for (const e = Math.min(n, k + 10); k < e; k++) { if (b[k] === 40 || b[k] === 60) return true; if (!ASCII(b[k])) return false; } return true; };
+  const strEnd = k => { for (let d = 0; k < n; k++) { if (b[k] === 92) k++; else if (b[k] === 40) d++; else if (b[k] === 41 && --d === 0) return k + 1; } return -1; };
+  /* an EI that ends inline image data is followed by plain content, where only complete literal strings may hold other bytes */
+  const textAfter = k => { for (let left = 10; k < n && left > 0; left--) { if (b[k] === 40) { if ((k = strEnd(k)) < 0) return false; continue; } if (!ASCII(b[k])) return false; k++; } return true; };
   let i = 0, ops = [];
   while (i < n) {
     const c = b[i];
     if (WS(c)) { i++; continue; }
     if (c === 37) { while (i < n && b[i] !== 10 && b[i] !== 13) i++; continue; }
-    if (c === 40) { for (let d = 0; i < n; i++) { if (b[i] === 92) i++; else if (b[i] === 40) d++; else if (b[i] === 41 && --d === 0) { i++; break; } } ops.push(null); continue; }
+    if (c === 40) { if ((i = strEnd(i)) < 0) throw new Error("unterminated string"); ops.push(null); continue; }
     if ((c === 60 || c === 62) && b[i + 1] === c) { i += 2; ops.push(null); continue; }
     if (c === 60) { while (i < n && b[i] !== 62) i++; i++; ops.push(null); continue; }
     if (c === 47) {
