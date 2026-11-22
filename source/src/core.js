@@ -299,8 +299,6 @@ function resourceNames(b, add) {
   const DL = c => c === 40 || c === 41 || c === 60 || c === 62 || c === 91 || c === 93 || c === 123 || c === 125 || c === 47 || c === 37;
   const ASCII = c => WS(c) || (c > 32 && c < 127);
   const strEnd = k => { for (let d = 0; k < n; k++) { if (b[k] === 92) k++; else if (b[k] === 40) d++; else if (b[k] === 41 && --d === 0) return k + 1; } return -1; };
-  /* an EI that ends inline image data is followed by plain content, where only complete literal strings and comments may hold other bytes */
-  const textAfter = k => { for (let left = 10; k < n && left > 0; left--) { if (b[k] === 40) { if ((k = strEnd(k)) < 0) return false; continue; } if (b[k] === 37) { while (k < n && b[k] !== 10 && b[k] !== 13) k++; continue; } if (!ASCII(b[k])) return false; k++; } return true; };
   let i = 0, ops = [];
   while (i < n) {
     const c = b[i];
@@ -322,14 +320,17 @@ function resourceNames(b, add) {
       const at = k => { const j = ops.findIndex(v => k.includes(v)); return j < 0 ? undefined : ops[j + 1]; };
       const cs = at(["CS", "ColorSpace"]), len = at(["L", "Length"]);
       if (typeof cs === "string") add("ColorSpace", cs);
+      /* end the data where PDF.js does (an EI followed by 10 plain bytes); a viewer may end it at an earlier EI instead,
+         so also read what follows the first EI as content: an extra name kept is harmless, a missed one loses a drawing */
       let j = i + 1 + (typeof len === "number" ? len : 0), first = -1;
       for (;; j++) {
-        if (j + 1 >= n) { j = first < 0 ? n : first; break; }
+        if (j + 1 >= n) { j = n; break; }
         if (b[j] === 69 && b[j + 1] === 73 && WS(b[j - 1]) && (j + 2 >= n || WS(b[j + 2]) || DL(b[j + 2]))) {
           if (first < 0) first = j + 2;
-          if (textAfter(j + 2)) { j += 2; break; }
+          if (b.subarray(j + 2, j + 12).every(ASCII)) { j += 2; break; }
         }
       }
+      if (first >= 0 && first < j) try { resourceNames(b.subarray(first, j), add); } catch { }
       i = j; ops = []; continue;
     }
     const cat = RES_OPS[tok];
