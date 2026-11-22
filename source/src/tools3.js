@@ -26,26 +26,35 @@ tool({ id: "metadata", name: "PDF Metadata", cat: "sec", icon: "form",
       if (v) { set[key.toLowerCase()](v); keep.add(key); }
     }
     for (const k of info.keys()) if (!keep.has(k.decodeText())) info.delete(k);
-    /* XMP and editor data can hang off any dictionary or stream, not just the catalog. */
+    /* XMP and editor data can hang off any dictionary or stream, not just the catalog. Resource maps can also use
+       these names for a font or picture, so only drop an entry whose value looks like metadata. */
+    const isXmp = v => v instanceof PL.PDFStream && !["Image", "Form", "PS"].includes(v.dict.lookup(N("Subtype"))?.decodeText?.());
+    const isPiece = v => v instanceof PDFDict && !(v instanceof PL.PDFStream) && v.values().every(e => { const d = src.lookup(e); return d instanceof PDFDict && !(d instanceof PL.PDFStream); });
     const strip = (x, seen = new Set()) => {
       if (x instanceof PL.PDFStream) x = x.dict;
       if (seen.has(x)) return; seen.add(x);
-      if (x instanceof PDFDict) { x.delete(N("Metadata")); x.delete(N("PieceInfo")); for (const v of x.values()) strip(v, seen); }
-      else if (x instanceof PDFArray) for (const v of x.asArray()) strip(v, seen);
+      if (x instanceof PDFDict) {
+        if (x.has(N("Metadata")) && isXmp(src.lookup(x.get(N("Metadata"))))) x.delete(N("Metadata"));
+        if (x.has(N("PieceInfo")) && isPiece(src.lookup(x.get(N("PieceInfo"))))) x.delete(N("PieceInfo"));
+        for (const v of x.values()) strip(v, seen);
+      } else if (x instanceof PDFArray) for (const v of x.asArray()) strip(v, seen);
     };
     for (const [, obj] of src.enumerateIndirectObjects()) strip(obj);
-    /* Copy only what the catalog and Info still reach into a new file, so objects left over from earlier saves are not written. */
-    const ctx = PL.PDFContext.create(), copier = PL.PDFObjectCopier.for(src, ctx);
-    ctx.trailerInfo.Root = copier.copy(src.trailerInfo.Root);
-    if (info.keys().length) ctx.trailerInfo.Info = ctx.register(copier.copy(info));
-    /* The copier detaches pages from their parent; link the page tree back up. */
-    const relink = (ref, seen = new Set()) => {
-      if (seen.has(ref)) return; seen.add(ref);
-      const kids = ctx.lookup(ref)?.lookup?.(N("Kids"));
-      if (kids instanceof PDFArray) for (const k of kids.asArray()) { const d = ctx.lookup(k); if (d instanceof PDFDict) { d.set(N("Parent"), ref); relink(k, seen); } }
+    /* Copy only what the catalog and Info still reach into a new file, so objects left over from earlier saves are not written.
+       A queue instead of recursion, so long bookmark chains cannot overflow the stack. */
+    const ctx = PL.PDFContext.create(), refs = new Map(), queue = [];
+    const refOf = r => { if (!refs.has(r)) { refs.set(r, ctx.nextRef()); queue.push(r); } return refs.get(r); };
+    const remap = x => {
+      if (x instanceof PDFRef) return refOf(x);
+      if (x instanceof PDFRawStream) return PDFRawStream.of(remap(x.dict), x.contents);
+      if (x instanceof PL.PDFStream) return PDFRawStream.of(remap(x.dict), x.getContents());
+      if (x instanceof PDFDict) { const d = PDFDict.withContext(ctx); for (const [k, v] of x.entries()) d.set(k, remap(v)); return d; }
+      if (x instanceof PDFArray) { const a = PDFArray.withContext(ctx); for (const v of x.asArray()) a.push(remap(v)); return a; }
+      return x;
     };
-    const pages = ctx.lookup(ctx.trailerInfo.Root)?.get?.(N("Pages"));
-    if (pages instanceof PDFRef) relink(pages);
+    ctx.trailerInfo.Root = refOf(src.trailerInfo.Root);
+    if (info.keys().length) ctx.trailerInfo.Info = src.trailerInfo.Info instanceof PDFRef ? refOf(src.trailerInfo.Info) : ctx.register(remap(info));
+    for (let i = 0; i < queue.length; i++) { const r = queue[i], x = src.lookup(r); ctx.assign(refs.get(r), x === undefined ? PDFNull : remap(x)); }
     const id = PDFHexString.of([...crypto.getRandomValues(new Uint8Array(16))].map(b => b.toString(16).padStart(2, "0")).join(""));
     ctx.trailerInfo.ID = ctx.obj([id, id]);
     return { files: [one(f, "-metadata", await PL.PDFWriter.forContext(ctx, 50).serializeToBuffer())], note: "Metadata updated" };
