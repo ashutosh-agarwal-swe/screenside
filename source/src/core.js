@@ -378,18 +378,19 @@ async function trimToPages(out) {
       else if (!own.has(o)) { own.add(o); const m = new Map(); collect(glyphs, r, m); o.set(N("Resources"), build(r, m)); }
     }
   };
+  /* a page's content array is one stream split anywhere, even between an operand and its operator, so read the parts as one */
   const collect = (streams, res, names) => {
-    for (const s of streams) {
-      if (!isStream(s) || stack.has(s)) continue;
-      stack.add(s);
-      resourceNames(streamData(s), (cat, nm) => {
-        if (!names.has(cat)) names.set(cat, new Set());
-        const set = names.get(cat); if (set.has(nm)) return; set.add(nm);
-        const dict = res instanceof PDFDict && res.lookup(N(cat));
-        if (dict instanceof PDFDict) follow(cat, look(dict.get(N(nm))), res, names);
-      });
-      stack.delete(s);
-    }
+    const fresh = streams.filter(s => isStream(s) && !stack.has(s)); if (!fresh.length) return;
+    fresh.forEach(s => stack.add(s));
+    const parts = fresh.map(streamData), all = new Uint8Array(parts.reduce((t, p) => t + p.length + 1, 0));
+    let at = 0; for (const p of parts) { all.set(p, at); all[at + p.length] = 10; at += p.length + 1; }
+    resourceNames(all, (cat, nm) => {
+      if (!names.has(cat)) names.set(cat, new Set());
+      const set = names.get(cat); if (set.has(nm)) return; set.add(nm);
+      const dict = res instanceof PDFDict && res.lookup(N(cat));
+      if (dict instanceof PDFDict) follow(cat, look(dict.get(N(nm))), res, names);
+    });
+    fresh.forEach(s => stack.delete(s));
   };
   try {
     for (const p of out.getPages()) {
