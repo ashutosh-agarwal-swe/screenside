@@ -298,6 +298,8 @@ function resourceNames(b, add) {
   const n = b.length, WS = c => c === 0 || c === 9 || c === 10 || c === 12 || c === 13 || c === 32;
   const DL = c => c === 40 || c === 41 || c === 60 || c === 62 || c === 91 || c === 93 || c === 123 || c === 125 || c === 47 || c === 37;
   const ASCII = c => WS(c) || (c > 32 && c < 127);
+  /* an EI that ends inline image data is followed by plain content, where only strings may hold other bytes */
+  const textAfter = k => { for (const e = Math.min(n, k + 10); k < e; k++) { if (b[k] === 40 || b[k] === 60) return true; if (!ASCII(b[k])) return false; } return true; };
   let i = 0, ops = [];
   while (i < n) {
     const c = b[i];
@@ -319,10 +321,13 @@ function resourceNames(b, add) {
       const at = k => { const j = ops.findIndex(v => k.includes(v)); return j < 0 ? undefined : ops[j + 1]; };
       const cs = at(["CS", "ColorSpace"]), len = at(["L", "Length"]);
       if (typeof cs === "string") add("ColorSpace", cs);
-      let j = i + 1 + (typeof len === "number" ? len : 0);
+      let j = i + 1 + (typeof len === "number" ? len : 0), first = -1;
       for (;; j++) {
-        if (j + 1 >= n) { j = n; break; }
-        if (b[j] === 69 && b[j + 1] === 73 && WS(b[j - 1]) && (j + 2 >= n || WS(b[j + 2]) || DL(b[j + 2])) && b.subarray(j + 2, j + 12).every(ASCII)) { j += 2; break; }
+        if (j + 1 >= n) { j = first < 0 ? n : first; break; }
+        if (b[j] === 69 && b[j + 1] === 73 && WS(b[j - 1]) && (j + 2 >= n || WS(b[j + 2]) || DL(b[j + 2]))) {
+          if (first < 0) first = j + 2;
+          if (textAfter(j + 2)) { j += 2; break; }
+        }
       }
       i = j; ops = []; continue;
     }
