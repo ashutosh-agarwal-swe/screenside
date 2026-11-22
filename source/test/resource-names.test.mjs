@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 
 const core = readFileSync(new URL("../src/core.js", import.meta.url), "utf8");
 const pick = re => { const m = core.match(re); assert.ok(m, `not found in core.js: ${re}`); return m[0]; };
-const resourceNames = new Function(`${pick(/^const RES_OPS = .*$/m)}\n${pick(/^function resourceNames\(b, add\) \{[\s\S]*?^\}$/m)}\nreturn resourceNames;`)();
+const resourceNames = new Function(`${pick(/^const RES_OPS = .*$/m)}\n${pick(/^function resourceNames\([\s\S]*?^\}$/m)}\nreturn resourceNames;`)();
 
 const bytes = s => Uint8Array.from(s, c => c.charCodeAt(0));
 const names = s => { const out = []; resourceNames(typeof s === "string" ? bytes(s) : s, (cat, nm) => out.push(`${cat}:${nm}`)); return out; };

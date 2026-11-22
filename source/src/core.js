@@ -294,26 +294,11 @@ function streamData(s) {
   return PL.decodePDFRawStream(s).decode();
 }
 /* calls add(category, name) for every resource name a content stream uses */
-function resourceNames(b, add) {
+function resourceNames(b, add, budget = { left: 32 * b.length + (1 << 20) }) {
   const n = b.length, WS = c => c === 0 || c === 9 || c === 10 || c === 12 || c === 13 || c === 32;
   const DL = c => c === 40 || c === 41 || c === 60 || c === 62 || c === 91 || c === 93 || c === 123 || c === 125 || c === 47 || c === 37;
   const ASCII = c => WS(c) || (c > 32 && c < 127);
-  const strEnd = (k, max = n) => { for (let d = 0, end = Math.min(n, k + max); k < end; k++) { if (b[k] === 92) k++; else if (b[k] === 40) d++; else if (b[k] === 41 && --d === 0) return k + 1; } return -1; };
-  /* an EI that ends inline image data is followed by plain content, where only complete literal strings may hold other bytes;
-     the bytes looked at past candidate EIs are capped in total so crafted data cannot make the scan quadratic */
-  let budget = 16 * n + (1 << 20);
-  const textAfter = k => {
-    for (let left = 10; k < n && left > 0; left--) {
-      if (b[k] === 40) {
-        const e = strEnd(k, budget);
-        if (e < 0 && n - k > budget) throw new Error("inline image data too complex");
-        budget -= (e < 0 ? n : e) - k;
-        if (e < 0) return false; k = e; continue;
-      }
-      if (!ASCII(b[k])) return false; k++;
-    }
-    return true;
-  };
+  const strEnd = k => { for (let d = 0; k < n; k++) { if (b[k] === 92) k++; else if (b[k] === 40) d++; else if (b[k] === 41 && --d === 0) return k + 1; } return -1; };
   let i = 0, ops = [];
   while (i < n) {
     const c = b[i];
@@ -335,13 +320,20 @@ function resourceNames(b, add) {
       const at = k => { const j = ops.findIndex(v => k.includes(v)); return j < 0 ? undefined : ops[j + 1]; };
       const cs = at(["CS", "ColorSpace"]), len = at(["L", "Length"]);
       if (typeof cs === "string") add("ColorSpace", cs);
-      let j = i + 1 + (Number.isInteger(len) && len >= 0 ? len : 0), first = -1;
+      /* end the data where PDF.js does (an EI followed by 10 plain bytes); a viewer may end it at any earlier EI instead,
+         so also read what follows each of those as content: an extra name kept is harmless, a missed one loses a drawing */
+      let j = i + 1 + (Number.isInteger(len) && len >= 0 ? len : 0);
+      const ends = [];
       for (;; j++) {
-        if (j + 1 >= n) { j = first < 0 ? n : first; break; }
+        if (j + 1 >= n) { j = n; break; }
         if (b[j] === 69 && b[j + 1] === 73 && WS(b[j - 1]) && (j + 2 >= n || WS(b[j + 2]) || DL(b[j + 2]))) {
-          if (first < 0) first = j + 2;
-          if (textAfter(j + 2)) { j += 2; break; }
+          ends.push(j + 2);
+          if (b.subarray(j + 2, j + 12).every(ASCII)) { j += 2; break; }
         }
+      }
+      for (const e of ends) if (e < j) {
+        if ((budget.left -= j - e) < 0) throw new Error("content too complex");
+        try { resourceNames(b.subarray(e, j), add, budget); } catch (err) { if (budget.left < 0) throw err; }
       }
       if (!(j > i)) throw new Error("inline image did not advance");
       i = j; ops = []; continue;
