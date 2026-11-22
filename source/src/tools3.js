@@ -5,7 +5,7 @@ const META_FIELDS = [
 ];
 tool({ id: "metadata", name: "PDF Metadata", cat: "sec", icon: "form",
   desc: "See, edit or wipe the details stored inside the file: title, author, software.",
-  note: "Emptying a box deletes that detail from the saved copy. The hidden metadata block (XMP) is always dropped. The inspector lists what a file carries now.",
+  note: "Emptying a box deletes that detail from the saved copy. Every other stored detail except the two dates is dropped, along with all hidden XMP metadata blocks, editor data (PieceInfo), the file ID and leftovers from earlier saves. The inspector lists what a file carries now.",
   accept: ["pdf"], verb: "Save metadata",
   async prepare([f], opts) {
     let doc; try { doc = repairStreams(await PDFDocument.load(f.bytes, { updateMetadata: false })); } catch (e) { throw pdfError(e); }
@@ -18,17 +18,46 @@ tool({ id: "metadata", name: "PDF Metadata", cat: "sec", icon: "form",
   },
   async run({ files: [f], opts: o }) {
     let doc; try { doc = repairStreams(await PDFDocument.load(f.bytes, { updateMetadata: false })); } catch (e) { throw pdfError(e); }
-    const info = doc.getInfoDict(), N = s => PDFName.of(s);
+    const src = doc.context, info = doc.getInfoDict(), N = s => PDFName.of(s), keep = new Set(["CreationDate", "ModDate"]);
     const set = { title: v => doc.setTitle(v), author: v => doc.setAuthor(v), subject: v => doc.setSubject(v),
       keywords: v => doc.setKeywords(v.split(",").map(s => s.trim()).filter(Boolean)), creator: v => doc.setCreator(v), producer: v => doc.setProducer(v) };
     for (const [key] of META_FIELDS) {
       const v = cleanText(o["m_" + key.toLowerCase()] || "").trim();
-      if (v) set[key.toLowerCase()](v); else info.delete(N(key));
+      if (v) { set[key.toLowerCase()](v); keep.add(key); }
     }
-    const meta = doc.catalog.get(N("Metadata"));
-    if (meta instanceof PDFRef) { const st = doc.context.lookup(meta); if (st instanceof PL.PDFStream) doc.context.assign(meta, PDFRawStream.of(st.dict, new Uint8Array(0))); }
-    doc.catalog.delete(N("Metadata"));
-    return { files: [one(f, "-metadata", await doc.save({ useObjectStreams: false }))], note: "Metadata updated" };
+    for (const k of info.keys()) if (!keep.has(k.decodeText())) info.delete(k);
+    /* XMP and editor data can hang off any dictionary or stream, not just the catalog. Resource maps can also use
+       these names for a font or picture, so only drop an entry whose value looks like metadata. */
+    const isXmp = v => v instanceof PL.PDFStream && !["Image", "Form", "PS"].includes(v.dict.lookup(N("Subtype"))?.decodeText?.());
+    const isPiece = v => v instanceof PDFDict && !(v instanceof PL.PDFStream) && v.values().every(e => { const d = src.lookup(e); return d instanceof PDFDict && !(d instanceof PL.PDFStream); });
+    const strip = (x, seen = new Set()) => {
+      if (x instanceof PL.PDFStream) x = x.dict;
+      if (seen.has(x)) return; seen.add(x);
+      if (x instanceof PDFDict) {
+        if (x.has(N("Metadata")) && isXmp(src.lookup(x.get(N("Metadata"))))) x.delete(N("Metadata"));
+        if (x.has(N("PieceInfo")) && isPiece(src.lookup(x.get(N("PieceInfo"))))) x.delete(N("PieceInfo"));
+        for (const v of x.values()) strip(v, seen);
+      } else if (x instanceof PDFArray) for (const v of x.asArray()) strip(v, seen);
+    };
+    for (const [, obj] of src.enumerateIndirectObjects()) strip(obj);
+    /* Copy only what the catalog and Info still reach into a new file, so objects left over from earlier saves are not written.
+       A queue instead of recursion, so long bookmark chains cannot overflow the stack. */
+    const ctx = PL.PDFContext.create(), refs = new Map(), queue = [];
+    const refOf = r => { if (!refs.has(r)) { refs.set(r, ctx.nextRef()); queue.push(r); } return refs.get(r); };
+    const remap = x => {
+      if (x instanceof PDFRef) return refOf(x);
+      if (x instanceof PDFRawStream) return PDFRawStream.of(remap(x.dict), x.contents);
+      if (x instanceof PL.PDFStream) return PDFRawStream.of(remap(x.dict), x.getContents());
+      if (x instanceof PDFDict) { const d = PDFDict.withContext(ctx); for (const [k, v] of x.entries()) d.set(k, remap(v)); return d; }
+      if (x instanceof PDFArray) { const a = PDFArray.withContext(ctx); for (const v of x.asArray()) a.push(remap(v)); return a; }
+      return x;
+    };
+    ctx.trailerInfo.Root = refOf(src.trailerInfo.Root);
+    if (info.keys().length) ctx.trailerInfo.Info = src.trailerInfo.Info instanceof PDFRef ? refOf(src.trailerInfo.Info) : ctx.register(remap(info));
+    for (let i = 0; i < queue.length; i++) { const r = queue[i], x = src.lookup(r); ctx.assign(refs.get(r), x === undefined ? PDFNull : remap(x)); }
+    const id = PDFHexString.of([...crypto.getRandomValues(new Uint8Array(16))].map(b => b.toString(16).padStart(2, "0")).join(""));
+    ctx.trailerInfo.ID = ctx.obj([id, id]);
+    return { files: [one(f, "-metadata", await PL.PDFWriter.forContext(ctx, 50).serializeToBuffer())], note: "Metadata updated" };
   } });
 
 /* ---------- pull embedded pictures out ---------- */
