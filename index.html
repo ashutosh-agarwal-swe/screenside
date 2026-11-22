@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Screenside PDF Tools</title>
 <meta name="referrer" content="no-referrer">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-5haOqyeZ3guOe81Woy2z4g3i6+a4mc5Vz/ovS/CfJ8M=' 'wasm-unsafe-eval' blob:; worker-src blob:; child-src blob:; style-src 'unsafe-inline'; img-src blob: data:; connect-src 'none'; font-src 'none'; media-src 'none'; object-src 'none'; frame-src 'none'; manifest-src 'none'; form-action 'none'; base-uri 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-pue8rzzMIfd7Oi8/bIQPZa+k/1D1tIRgKs3/om9aVvY=' 'wasm-unsafe-eval' blob:; worker-src blob:; child-src blob:; style-src 'unsafe-inline'; img-src blob: data:; connect-src 'none'; font-src 'none'; media-src 'none'; object-src 'none'; frame-src 'none'; manifest-src 'none'; form-action 'none'; base-uri 'none'">
 <style>
 /* Layout idea: a light table. One fixed header, then a single view at a time: tool shelf, tool bench, page desk or page editor. */
 :root {
@@ -706,8 +706,8 @@ function resourceNames(b, add) {
   const DL = c => c === 40 || c === 41 || c === 60 || c === 62 || c === 91 || c === 93 || c === 123 || c === 125 || c === 47 || c === 37;
   const ASCII = c => WS(c) || (c > 32 && c < 127);
   const strEnd = k => { for (let d = 0; k < n; k++) { if (b[k] === 92) k++; else if (b[k] === 40) d++; else if (b[k] === 41 && --d === 0) return k + 1; } return -1; };
-  /* an EI that ends inline image data is followed by plain content, where only complete literal strings may hold other bytes */
-  const textAfter = k => { for (let left = 10; k < n && left > 0; left--) { if (b[k] === 40) { if ((k = strEnd(k)) < 0) return false; continue; } if (!ASCII(b[k])) return false; k++; } return true; };
+  /* an EI that ends inline image data is followed by plain content, where only complete literal strings and comments may hold other bytes */
+  const textAfter = k => { for (let left = 10; k < n && left > 0; left--) { if (b[k] === 40) { if ((k = strEnd(k)) < 0) return false; continue; } if (b[k] === 37) { while (k < n && b[k] !== 10 && b[k] !== 13) k++; continue; } if (!ASCII(b[k])) return false; k++; } return true; };
   let i = 0, ops = [];
   while (i < n) {
     const c = b[i];
