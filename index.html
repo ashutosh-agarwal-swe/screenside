@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Screenside PDF Tools</title>
 <meta name="referrer" content="no-referrer">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-DoOIKpVHjGY7S47D6pMBiUeDwGY8Xp1TsMz9QQE23QU=' 'wasm-unsafe-eval' blob:; worker-src blob:; child-src blob:; style-src 'unsafe-inline'; img-src blob: data:; connect-src 'none'; font-src 'none'; media-src 'none'; object-src 'none'; frame-src 'none'; manifest-src 'none'; form-action 'none'; base-uri 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-zhVRLJ4Heam614F1kiCHWDnELyyjz/kRW+9rQYEjMKs=' 'wasm-unsafe-eval' blob:; worker-src blob:; child-src blob:; style-src 'unsafe-inline'; img-src blob: data:; connect-src 'none'; font-src 'none'; media-src 'none'; object-src 'none'; frame-src 'none'; manifest-src 'none'; form-action 'none'; base-uri 'none'">
 <style>
 /* Layout idea: a light table. One fixed header, then a single view at a time: tool shelf, tool bench, page desk or page editor. */
 :root {
@@ -705,6 +705,8 @@ function resourceNames(b, add) {
   const n = b.length, WS = c => c === 0 || c === 9 || c === 10 || c === 12 || c === 13 || c === 32;
   const DL = c => c === 40 || c === 41 || c === 60 || c === 62 || c === 91 || c === 93 || c === 123 || c === 125 || c === 47 || c === 37;
   const ASCII = c => WS(c) || (c > 32 && c < 127);
+  /* an EI that ends inline image data is followed by plain content, where only strings may hold other bytes */
+  const textAfter = k => { for (const e = Math.min(n, k + 10); k < e; k++) { if (b[k] === 40 || b[k] === 60) return true; if (!ASCII(b[k])) return false; } return true; };
   let i = 0, ops = [];
   while (i < n) {
     const c = b[i];
@@ -726,10 +728,13 @@ function resourceNames(b, add) {
       const at = k => { const j = ops.findIndex(v => k.includes(v)); return j < 0 ? undefined : ops[j + 1]; };
       const cs = at(["CS", "ColorSpace"]), len = at(["L", "Length"]);
       if (typeof cs === "string") add("ColorSpace", cs);
-      let j = i + 1 + (typeof len === "number" ? len : 0);
+      let j = i + 1 + (typeof len === "number" ? len : 0), first = -1;
       for (;; j++) {
-        if (j + 1 >= n) { j = n; break; }
-        if (b[j] === 69 && b[j + 1] === 73 && WS(b[j - 1]) && (j + 2 >= n || WS(b[j + 2]) || DL(b[j + 2])) && b.subarray(j + 2, j + 12).every(ASCII)) { j += 2; break; }
+        if (j + 1 >= n) { j = first < 0 ? n : first; break; }
+        if (b[j] === 69 && b[j + 1] === 73 && WS(b[j - 1]) && (j + 2 >= n || WS(b[j + 2]) || DL(b[j + 2]))) {
+          if (first < 0) first = j + 2;
+          if (textAfter(j + 2)) { j += 2; break; }
+        }
       }
       i = j; ops = []; continue;
     }
@@ -749,6 +754,8 @@ async function trimToPages(out) {
   const isStream = o => o instanceof PL.PDFStream;
   const build = (res, names) => {
     const d = ctx.obj({}), ps = res instanceof PDFDict && res.get(N("ProcSet")); if (ps) d.set(N("ProcSet"), ps);
+    const cs = res instanceof PDFDict && res.lookup(N("ColorSpace"));
+    if (cs instanceof PDFDict) for (const k of ["DefaultGray", "DefaultRGB", "DefaultCMYK"]) if (cs.get(N(k))) { if (!names.has("ColorSpace")) names.set("ColorSpace", new Set()); names.get("ColorSpace").add(k); }
     for (const [cat, set] of names) {
       const src = res instanceof PDFDict && res.lookup(N(cat)); if (!(src instanceof PDFDict)) continue;
       const c = ctx.obj({}); for (const k of set) { const v = src.get(N(k)); if (v) c.set(N(k), v); }
@@ -778,18 +785,19 @@ async function trimToPages(out) {
       else if (!own.has(o)) { own.add(o); const m = new Map(); collect(glyphs, r, m); o.set(N("Resources"), build(r, m)); }
     }
   };
+  /* a page's content array is one stream split anywhere, even between an operand and its operator, so read the parts as one */
   const collect = (streams, res, names) => {
-    for (const s of streams) {
-      if (!isStream(s) || stack.has(s)) continue;
-      stack.add(s);
-      resourceNames(streamData(s), (cat, nm) => {
-        if (!names.has(cat)) names.set(cat, new Set());
-        const set = names.get(cat); if (set.has(nm)) return; set.add(nm);
-        const dict = res instanceof PDFDict && res.lookup(N(cat));
-        if (dict instanceof PDFDict) follow(cat, look(dict.get(N(nm))), res, names);
-      });
-      stack.delete(s);
-    }
+    const fresh = streams.filter(s => isStream(s) && !stack.has(s)); if (!fresh.length) return;
+    fresh.forEach(s => stack.add(s));
+    const parts = fresh.map(streamData), all = new Uint8Array(parts.reduce((t, p) => t + p.length + 1, 0));
+    let at = 0; for (const p of parts) { all.set(p, at); all[at + p.length] = 10; at += p.length + 1; }
+    resourceNames(all, (cat, nm) => {
+      if (!names.has(cat)) names.set(cat, new Set());
+      const set = names.get(cat); if (set.has(nm)) return; set.add(nm);
+      const dict = res instanceof PDFDict && res.lookup(N(cat));
+      if (dict instanceof PDFDict) follow(cat, look(dict.get(N(nm))), res, names);
+    });
+    fresh.forEach(s => stack.delete(s));
   };
   try {
     for (const p of out.getPages()) {
